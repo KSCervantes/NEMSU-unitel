@@ -8,10 +8,11 @@ import type { DateRange } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import Image from "next/image";
 import { db } from '@/lib/firebase';
-import { collection, addDoc, serverTimestamp, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, onSnapshot, query, where, getDocs } from 'firebase/firestore';
 import { useFocusTrap } from '@/app/hooks/useFocusTrap';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
 import { logError } from '@/lib/logger';
+import { Room } from '@/lib/types/room';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -43,16 +44,12 @@ interface Barangay {
 export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingModalProps) {
   // Enable keyboard navigation
   useKeyboardNavigation();
-  const roomData: { [key: string]: { image: string; price: number; maxGuests: number; perBed?: string } } = {
-    "Suite Room": { image: "/img/SUITE ROOM.png", price: 1200, maxGuests: 2 },
-    "Triple Room": { image: "/img/TRIPLE ROOM.png", price: 1200, maxGuests: 3 },
-    // Updated to use Firebase Storage public URL for Dorm Room
-    "Dorm Room": { image: "/img/Dorm Room.png", price: 500, maxGuests: 6, perBed: "/ Bed" },
-    "Twin Room": { image: "/img/TWIN ROOM.png", price: 1000, maxGuests: 2 },
-    "Double Room": { image: "/img/DOUBLE ROOM.png", price: 1000, maxGuests: 2 },
-  };
 
   const EXTRA_GUEST_FEE = 200;
+
+  // State for rooms fetched from Firestore
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -90,6 +87,61 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
   const [checkInTime, setCheckInTime] = useState<string>("15:00");
   const [checkOutTime, setCheckOutTime] = useState<string>("11:00");
   const [maintenanceByRoom, setMaintenanceByRoom] = useState<Record<string, { start: number; end: number }[]>>({});
+
+  // Get room data from fetched rooms - defined early so it's available throughout the component
+  const getRoomData = (roomName: string) => {
+    const room = rooms.find(r => r.name === roomName);
+    if (!room) return null;
+
+    return {
+      image: room.image,
+      price: room.priceNumber || parseFloat(room.price.replace(/,/g, '')) || 0,
+      maxGuests: room.maxGuests,
+      perBed: room.perBed,
+    };
+  };
+
+  // Fetch rooms from Firestore when modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const fetchRooms = async () => {
+      try {
+        setRoomsLoading(true);
+        const roomsRef = collection(db, 'rooms');
+        const snapshot = await getDocs(roomsRef);
+
+        const roomsData: Room[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          roomsData.push({
+            id: doc.id,
+            name: data.name,
+            price: data.price,
+            priceNumber: data.priceNumber || parseFloat(data.price?.replace(/,/g, '') || '0'),
+            description: data.description,
+            image: data.image,
+            perBed: data.perBed,
+            maxGuests: data.maxGuests || 2,
+            slug: data.slug || doc.id,
+            createdAt: data.createdAt,
+          } as Room);
+        });
+
+        // Deduplicate by name (in case of duplicates)
+        const unique = Array.from(
+          new Map(roomsData.map((r) => [r.name, r])).values()
+        );
+        setRooms(unique);
+      } catch (error) {
+        logError('Error fetching rooms:', error);
+      } finally {
+        setRoomsLoading(false);
+      }
+    };
+
+    fetchRooms();
+  }, [isOpen]);
 
   // Update room when selectedRoom prop changes
   useEffect(() => {
@@ -227,7 +279,9 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     return [...toIntervals(r), ...toIntervals(m)];
   };
 
-  const selectedRoomData = formData.room ? roomData[formData.room] : null;
+  // Get selected room data from fetched rooms
+  const selectedRoomObj = formData.room ? rooms.find(r => r.name === formData.room) : null;
+  const selectedRoomData = formData.room ? getRoomData(formData.room) : null;
 
   // Calculate nights and total price
   const calculateStay = () => {
@@ -241,16 +295,21 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     const nights = diffDays > 0 ? diffDays : 0;
 
-    const pricePerNight = selectedRoomData.price;
+    const roomInfo = getRoomData(formData.room);
+    if (!roomInfo) {
+      return { nights: 0, totalPrice: 0, extraGuests: 0, extraGuestFee: 0 };
+    }
+
+    const pricePerNight = roomInfo.price;
     const guestsCount = parseInt(formData.guests) || 1;
-    const maxGuests = selectedRoomData.maxGuests;
+    const maxGuests = roomInfo.maxGuests;
 
     let totalPrice = 0;
     let extraGuests = 0;
     let extraGuestFee = 0;
 
-    // For Dorm Room, multiply by number of guests (price per bed)
-    if (formData.room === "Dorm Room") {
+    // For rooms with perBed pricing, multiply by number of guests (price per bed)
+    if (roomInfo.perBed) {
       totalPrice = pricePerNight * guestsCount * nights;
     } else {
       // Base price for the room
@@ -366,19 +425,29 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
         return;
       }
       // Calculate payment
-      const roomInfo = roomData[formData.room] || { price: 0, maxGuests: 1 };
+      const roomInfo = getRoomData(formData.room);
+      if (!roomInfo) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Error',
+          text: 'Selected room not found. Please select a valid room.',
+        });
+        setLoading(false);
+        return;
+      }
+
       const nights = Math.max(1, Math.ceil((new Date(formData.checkOut).getTime() - new Date(formData.checkIn).getTime()) / (1000 * 60 * 60 * 24)));
       const guests = parseInt(formData.guests) || 1;
-      
+
       let basePrice = 0;
       let extraFee = 0;
       let totalPayment = 0;
-      
-      // For Dorm Room: price is per bed, so multiply by number of guests
-      if (formData.room === "Dorm Room") {
+
+      // For rooms with perBed pricing: multiply by number of guests
+      if (roomInfo.perBed) {
         basePrice = roomInfo.price * guests * nights;
         totalPayment = basePrice;
-        // No extra guest fee for Dorm Room since it's per bed pricing
+        // No extra guest fee for per-bed pricing
       } else {
         // For other rooms: base price per night, extra fee for guests exceeding max
         const extraGuests = Math.max(0, guests - roomInfo.maxGuests);
@@ -502,7 +571,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
   };
 
   return (
-    <div 
+    <div
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-sm animate-fadeIn"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -511,7 +580,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
       aria-modal="true"
       aria-labelledby="booking-modal-title"
     >
-      <div 
+      <div
         ref={modalRef}
         className="bg-white rounded-xl sm:rounded-2xl max-w-5xl w-full max-h-[95vh] sm:max-h-[90vh] overflow-y-auto shadow-2xl animate-slideUp"
       >
@@ -562,12 +631,12 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                         <span className="text-xs sm:text-sm text-gray-600">Number of guests:</span>
                         <span className="text-sm sm:text-md font-semibold text-blue-900">{formData.guests}</span>
                       </div>
-                      {formData.room === "Dorm Room" && (
+                      {selectedRoomData.perBed && (
                         <div className="flex justify-between items-center mb-1">
                           <span className="text-xs text-gray-500 italic">Price per bed × guests × nights</span>
                         </div>
                       )}
-                      {extraGuests > 0 && formData.room !== "Dorm Room" && (
+                      {extraGuests > 0 && !selectedRoomData.perBed && (
                         <>
                           <div className="flex justify-between items-center mb-1 text-orange-600 text-xs sm:text-sm">
                             <span>Extra guests ({extraGuests}):</span>
@@ -924,11 +993,15 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                 className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
               >
                 <option value="">Select a room</option>
-                <option value="Suite Room">Suite Room - ₱1,200</option>
-                <option value="Triple Room">Triple Room - ₱1,200</option>
-                <option value="Dorm Room">Dorm Room - ₱500/bed</option>
-                <option value="Twin Room">Twin Room - ₱1,000</option>
-                <option value="Double Room">Double Room - ₱1,000</option>
+                {roomsLoading ? (
+                  <option value="" disabled>Loading rooms...</option>
+                ) : (
+                  rooms.map((room) => (
+                    <option key={room.id || room.name} value={room.name}>
+                      {room.name} - ₱{room.price}{room.perBed ? room.perBed : ''}
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 
@@ -941,13 +1014,24 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                 required
                 value={formData.guests}
                 onChange={handleChange}
-                className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+                disabled={!selectedRoomData}
+                className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
               >
-                <option value="1">1 Guest</option>
-                <option value="2">2 Guests</option>
-                <option value="3">3 Guests</option>
-                <option value="4">4 Guests</option>
-                <option value="5">5+ Guests</option>
+                {!selectedRoomData ? (
+                  <option value="">Select a room first</option>
+                ) : (
+                  Array.from({ length: selectedRoomData.maxGuests }, (_, i) => i + 1).map((num) => (
+                    <option key={num} value={num.toString()}>
+                      {num} {num === 1 ? 'Guest' : 'Guests'}
+                    </option>
+                  )).concat(
+                    selectedRoomData.maxGuests < 10 ? (
+                      <option key="more" value={(selectedRoomData.maxGuests + 1).toString()}>
+                        {selectedRoomData.maxGuests + 1}+ Guests (Extra fee applies)
+                      </option>
+                    ) : []
+                  )
+                )}
               </select>
             </div>
           </div>
@@ -1000,12 +1084,12 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                   <span className="text-gray-700 font-medium">Number of guests:</span>
                   <span className="text-blue-900 font-bold">{formData.guests}</span>
                 </div>
-                {formData.room === "Dorm Room" && (
+                {selectedRoomData?.perBed && (
                   <div className="flex justify-between items-center py-2 border-b border-blue-200">
                     <span className="text-gray-600 text-xs italic">Price per bed × guests × nights</span>
                   </div>
                 )}
-                {extraGuests > 0 && formData.room !== "Dorm Room" && (
+                {extraGuests > 0 && !selectedRoomData?.perBed && (
                   <>
                     <div className="flex justify-between items-center py-2 border-b border-orange-200 bg-orange-50 px-3 rounded">
                       <span className="text-orange-700 font-medium">Extra guests ({extraGuests}):</span>

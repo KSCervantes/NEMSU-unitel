@@ -9,6 +9,7 @@ import BookingModal from "./components/BookingModal";
 import { db, storage } from '@/lib/firebase';
 import { collection, query, where, getDocs, addDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref, getDownloadURL } from 'firebase/storage';
+import { updateRoomImagesToStorageUrls } from '@/lib/utils/updateRoomImages';
 
 interface Room {
   id?: string;
@@ -17,6 +18,7 @@ interface Room {
   description: string;
   image: string;
   perBed?: string;
+  maxGuests?: number;
 }
 
 export default function Home() {
@@ -34,55 +36,40 @@ export default function Home() {
       const snapshot = await getDocs(roomsRef);
 
       if (snapshot.empty) {
-        // Initialize default rooms if collection is empty
-        const defaultRoomsData = [
-          { name: "Suite Room", price: "1,200.00", description: "Experience luxury in our Suite Room, featuring a spacious layout, modern amenities, and elegant decor for a comfortable stay.", imageName: "Suite Room.png" },
-          { name: "Triple Room", price: "1,200.00", description: "Our Triple Room offers ample space for three guests, complete with contemporary furnishings and all the essentials for a pleasant stay.", imageName: "Triple Room.png" },
-          { name: "Dorm Room", price: "500.00", perBed: "/ Bed", description: "Our Dorm Room provides a budget-friendly option with shared accommodations, perfect for students and travelers seeking a communal living experience.", imageName: "Dorm Room.png" },
-          { name: "Twin Room", price: "1,000.00", description: "Enjoy the comfort of our Twin Room, featuring two separate beds, modern amenities, and a cozy atmosphere for a relaxing stay.", imageName: "Twin Room.png" },
-          { name: "Double Room", price: "1,000.00", description: "Our Double Room is designed for comfort and convenience, offering a spacious layout with a plush double bed and all the necessary amenities.", imageName: "Double Room.png" },
-        ];
-
-        // Get image URLs from Firebase Storage and add to Firestore
-        for (const roomData of defaultRoomsData) {
-          try {
-            const imageRef = ref(storage, `rooms/${roomData.imageName}`);
-            const imageUrl = await getDownloadURL(imageRef);
-            const { imageName, ...roomWithoutImageName } = roomData;
-            const id = roomData.name.toLowerCase().replace(/\s+/g, '-');
-            const docRef = doc(db, 'rooms', id);
-            await setDoc(docRef, { ...roomWithoutImageName, image: imageUrl }, { merge: true });
-          } catch (error) {
-            console.error(`Error getting image URL for ${roomData.name}:`, error);
-            // Fallback to local path if Firebase Storage fails
-            const { imageName, ...roomWithoutImageName } = roomData;
-            const id = roomData.name.toLowerCase().replace(/\s+/g, '-');
-            const docRef = doc(db, 'rooms', id);
-            await setDoc(docRef, { ...roomWithoutImageName, image: `/img/${imageName}` }, { merge: true });
-          }
-        }
-
-        // Fetch again after adding
-        const newSnapshot = await getDocs(roomsRef);
-        const roomsData: Room[] = [];
-        newSnapshot.forEach((doc) => {
-          roomsData.push({ id: doc.id, ...doc.data() } as Room);
-        });
-        // Deduplicate by name
-        const unique = Array.from(
-          new Map(roomsData.map((r) => [r.name, r])).values()
-        );
-        setRooms(unique);
+        // Rooms collection is empty - no rooms available yet
+        // Admin should add rooms manually through the admin panel
+        setRooms([]);
       } else {
-        const roomsData: Room[] = [];
-        snapshot.forEach((doc) => {
-          roomsData.push({ id: doc.id, ...doc.data() } as Room);
+        // Check if any rooms have local image paths and update them
+        const needsUpdate = Array.from(snapshot.docs).some(doc => {
+          const data = doc.data();
+          return data.image && data.image.startsWith('/img/');
         });
-        // Deduplicate by name
-        const unique = Array.from(
-          new Map(roomsData.map((r) => [r.name, r])).values()
-        );
-        setRooms(unique);
+
+        if (needsUpdate) {
+          console.log('🔄 Some rooms have local image paths, updating to Storage URLs...');
+          await updateRoomImagesToStorageUrls();
+          // Fetch again after update
+          const updatedSnapshot = await getDocs(roomsRef);
+          const roomsData: Room[] = [];
+          updatedSnapshot.forEach((doc) => {
+            roomsData.push({ id: doc.id, ...doc.data() } as Room);
+          });
+          const unique = Array.from(
+            new Map(roomsData.map((r) => [r.name, r])).values()
+          );
+          setRooms(unique);
+        } else {
+          const roomsData: Room[] = [];
+          snapshot.forEach((doc) => {
+            roomsData.push({ id: doc.id, ...doc.data() } as Room);
+          });
+          // Deduplicate by name
+          const unique = Array.from(
+            new Map(roomsData.map((r) => [r.name, r])).values()
+          );
+          setRooms(unique);
+        }
       }
     } catch (error) {
       console.error('Error fetching rooms:', error);
@@ -164,7 +151,7 @@ export default function Home() {
     <div className="min-h-screen bg-gray-50">
       <Navbar onBookNowClick={() => setIsBookingModalOpen(true)} />
 
-     {/* Hero Section */}
+      {/* Hero Section */}
       <section
         id="home"
         className="relative min-h-screen flex items-center justify-center pt-0 pb-12 sm:pt-28 md:pt-32 lg:pt-0"
@@ -325,7 +312,7 @@ export default function Home() {
             <div className="relative">
               <div className="relative h-[500px] rounded-3xl overflow-hidden shadow-2xl">
                 <Image
-                  src="/img/ROOMS.jpg"
+                  src="/img/ROOMS.webp"
                   alt="Hotel Interior"
                   fill
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 40vw"
@@ -345,7 +332,7 @@ export default function Home() {
       <section id="contact" className="py-20 px-4 text-black">
         <div className="container mx-auto max-w-7xl">
           <div className="text-center mb-16">
-            <h2 className="font-poppins font-bold text-4xl md:text-5xl mb-4 text-blue-900"style={{ color: '#112240' }}>
+            <h2 className="font-poppins font-bold text-4xl md:text-5xl mb-4 text-blue-900" style={{ color: '#112240' }}>
               Contact Us
             </h2>
             <div className="w-24 h-1 bg-amber-400 mx-auto mb-6" />

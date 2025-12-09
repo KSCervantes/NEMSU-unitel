@@ -8,7 +8,7 @@ import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, getDocs } from 'firebase/firestore';
 import EmptyState from '@/app/components/EmptyState';
 import LoadingSpinner from '@/app/components/LoadingSpinner';
 import ModalWithFocusTrap from '@/app/components/ModalWithFocusTrap';
@@ -37,14 +37,8 @@ export default function Maintenance() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<MaintenanceTask | null>(null);
 
-  // Available rooms from the client side - actual hotel rooms
-  const availableRooms = [
-    'Suite Room',
-    'Triple Room',
-    'Twin Room',
-    'Double Room',
-    'Dorm Room'
-  ];
+  // Fetch rooms from Firestore
+  const [availableRooms, setAvailableRooms] = useState<string[]>([]);
 
   const [formData, setFormData] = useState({
     title: '',
@@ -55,6 +49,31 @@ export default function Maintenance() {
     dueDate: '',
     description: ''
   });
+
+  // Fetch rooms from Firestore
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const fetchRooms = async () => {
+      try {
+        const roomsRef = collection(db, 'rooms');
+        const snapshot = await getDocs(roomsRef);
+        const roomNames: string[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.name) {
+            roomNames.push(data.name);
+          }
+        });
+        setAvailableRooms(roomNames);
+      } catch (error) {
+        console.error('Error fetching rooms:', error);
+        setAvailableRooms([]);
+      }
+    };
+
+    fetchRooms();
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

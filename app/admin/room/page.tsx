@@ -13,6 +13,7 @@ import { useRouter as useNextRouter } from 'next/navigation';
 import { db, storage } from '@/lib/firebase';
 import { collection, query, where, getDocs, doc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
+import { updateRoomImagesToStorageUrls } from '@/lib/utils/updateRoomImages';
 import EmptyState from '@/app/components/EmptyState';
 import LoadingSpinner from '@/app/components/LoadingSpinner';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
@@ -25,6 +26,7 @@ interface RoomType {
   description: string;
   image: string;
   perBed?: string;
+  maxGuests?: number;
 }
 
 interface RoomStatus {
@@ -36,7 +38,7 @@ export default function RoomManagement() {
   const router = useRouter();
   const nextRouter = useNextRouter();
   const { isAuthenticated, isLoading } = useProtectedAdminPage();
-  
+
   // Enable keyboard navigation
   useKeyboardNavigation();
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
@@ -44,9 +46,9 @@ export default function RoomManagement() {
   const [roomStatus, setRoomStatus] = useState<{ [key: string]: RoomStatus }>({});
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [newRoom, setNewRoom] = useState<{ name: string; price: string; description: string; perBed?: string; imageFile?: File | null }>({ name: '', price: '', description: '', perBed: '', imageFile: null });
+  const [newRoom, setNewRoom] = useState<{ name: string; price: string; description: string; perBed?: string; maxGuests?: number; imageFile?: File | null }>({ name: '', price: '', description: '', perBed: '', maxGuests: 2, imageFile: null });
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingRoom, setEditingRoom] = useState<{ id?: string; name: string; price: string; description: string; perBed?: string; image?: string; imageFile?: File | null } | null>(null);
+  const [editingRoom, setEditingRoom] = useState<{ id?: string; name: string; price: string; description: string; perBed?: string; maxGuests?: number; image?: string; imageFile?: File | null } | null>(null);
   const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => {
@@ -84,45 +86,9 @@ export default function RoomManagement() {
       const snapshot = await getDocs(roomsRef);
 
       if (snapshot.empty) {
-        // Initialize default rooms if collection is empty
-        const defaultRoomsData = [
-          { name: "Suite Room", price: "1,200.00", description: "Experience luxury in our Suite Room, featuring a spacious layout, modern amenities, and elegant decor for a comfortable stay.", imageName: "Suite Room.png" },
-          { name: "Triple Room", price: "1,200.00", description: "Our Triple Room offers ample space for three guests, complete with contemporary furnishings and all the essentials for a pleasant stay.", imageName: "Triple Room.png" },
-          { name: "Dorm Room", price: "500.00", perBed: "/ Bed", description: "Our Dorm Room provides a budget-friendly option with shared accommodations, perfect for students and travelers seeking a communal living experience.", imageName: "Dorm Room.png" },
-          { name: "Twin Room", price: "1,000.00", description: "Enjoy the comfort of our Twin Room, featuring two separate beds, modern amenities, and a cozy atmosphere for a relaxing stay.", imageName: "Twin Room.png" },
-          { name: "Double Room", price: "1,000.00", description: "Our Double Room is designed for comfort and convenience, offering a spacious layout with a plush double bed and all the necessary amenities.", imageName: "Double Room.png" },
-        ];
-
-        // Get image URLs from Firebase Storage and add to Firestore
-        for (const roomData of defaultRoomsData) {
-          try {
-            const imageRef = ref(storage, roomData.imageName);
-            const imageUrl = await getDownloadURL(imageRef);
-            const { imageName, ...roomWithoutImageName } = roomData;
-            const id = roomData.name.toLowerCase().replace(/\s+/g, '-');
-            const docRef = doc(db, 'rooms', id);
-            await setDoc(docRef, { ...roomWithoutImageName, image: imageUrl }, { merge: true });
-          } catch (error) {
-            logError(`Error getting image URL for ${roomData.name}:`, error);
-            // Fallback to local path if Firebase Storage fails
-            const { imageName, ...roomWithoutImageName } = roomData;
-            const id = roomData.name.toLowerCase().replace(/\s+/g, '-');
-            const docRef = doc(db, 'rooms', id);
-            await setDoc(docRef, { ...roomWithoutImageName, image: `/img/${imageName}` }, { merge: true });
-          }
-        }
-
-        // Fetch again after adding
-        const newSnapshot = await getDocs(roomsRef);
-        const rooms: RoomType[] = [];
-        newSnapshot.forEach((doc) => {
-          rooms.push({ id: doc.id, ...doc.data() } as RoomType);
-        });
-        // Deduplicate by name
-        const unique = Array.from(
-          new Map(rooms.map((r) => [r.name, r])).values()
-        );
-        setRoomTypes(unique);
+        // Rooms collection is empty - admin should add rooms manually
+        // No automatic initialization
+        setRoomTypes([]);
       } else {
         const rooms: RoomType[] = [];
         snapshot.forEach((doc) => {
@@ -178,8 +144,8 @@ export default function RoomManagement() {
           roomTypes.forEach((room) => {
             const nameBasedSlug = room.name.toLowerCase().trim().replace(/\s+/g, '-');
             const isUnder = maintenanceRooms.has(room.name) ||
-                           maintenanceRooms.has(nameBasedSlug) ||
-                           maintenanceRooms.has(room.id || '');
+              maintenanceRooms.has(nameBasedSlug) ||
+              maintenanceRooms.has(room.id || '');
             // Debug log (development only)
             if (process.env.NODE_ENV === 'development') {
               console.log(`🔧 ${room.name}: checking "${room.name}", "${nameBasedSlug}", "${room.id}" = ${isUnder}`);
@@ -329,8 +295,9 @@ export default function RoomManagement() {
             <button onClick={() => setShowDebug(!showDebug)} className="px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
               {showDebug ? 'Hide' : 'Show'} Debug
             </button>
-            <button 
-              onClick={() => setIsAddModalOpen(true)} 
+            <button
+              type="button"
+              onClick={() => setIsAddModalOpen(true)}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               aria-label="Add new room type"
             >
@@ -358,6 +325,7 @@ export default function RoomManagement() {
               }
               action={
                 <button
+                  type="button"
                   onClick={() => setIsAddModalOpen(true)}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
                 >
@@ -368,31 +336,122 @@ export default function RoomManagement() {
           </div>
         ) : (
           <>
-        {/* Debug Panel */}
-        {showDebug && (
-          <div className="mb-6 bg-gray-800 text-white p-4 rounded-lg">
-            <h3 className="font-bold mb-2">Debug: Room Status</h3>
-            <pre className="text-xs overflow-auto">{JSON.stringify(roomStatus, null, 2)}</pre>
-            <h3 className="font-bold mt-4 mb-2">Debug: Room Types</h3>
-            <pre className="text-xs overflow-auto">{JSON.stringify(roomTypes.map(r => ({ name: r.name, id: r.id })), null, 2)}</pre>
-          </div>
+            {/* Debug Panel */}
+            {showDebug && (
+              <div className="mb-6 bg-gray-800 text-white p-4 rounded-lg">
+                <h3 className="font-bold mb-2">Debug: Room Status</h3>
+                <pre className="text-xs overflow-auto">{JSON.stringify(roomStatus, null, 2)}</pre>
+                <h3 className="font-bold mt-4 mb-2">Debug: Room Types</h3>
+                <pre className="text-xs overflow-auto">{JSON.stringify(roomTypes.map(r => ({ name: r.name, id: r.id })), null, 2)}</pre>
+              </div>
+            )}
+            {/* Rooms Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {roomTypes.map((room, index) => {
+                const status = roomStatus[room.name];
+                return (
+                  <div key={room.id || `${room.name}-${index}`} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg hover:border-gray-300 dark:hover:border-gray-600 transition-all">
+                    {/* Room Image */}
+                    <div className="relative h-64 w-full">
+                      <Image
+                        src={room.image}
+                        alt={room.name}
+                        fill
+                        sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                        loading="eager"
+                        className="object-cover"
+                      />
+                      {status && status.underMaintenance && (
+                        <>
+                          <div className="absolute inset-0 bg-black/30 z-10" />
+                          <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 20 }} className="px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-500 text-white">
+                            🔧 Under Maintenance
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="p-6">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{room.name}</h3>
+                          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                            <span className="font-bold text-blue-600 dark:text-blue-400 text-lg">₱{room.price}</span>
+                            {room.perBed ? <span className="text-gray-500 dark:text-gray-400"> {room.perBed}</span> : <span className="text-gray-500 dark:text-gray-400"> per night</span>}
+                          </p>
+                        </div>
+                        {getRoomStatusBadge(room.name)}
+                      </div>
+
+                      <p className="text-gray-600 dark:text-gray-400 text-sm mb-4 line-clamp-3">
+                        {room.description}
+                      </p>
+                      {status && status.activeBookings > 0 && (
+                        <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                          <div className="flex items-center text-sm text-blue-700 dark:text-blue-300">
+                            <svg className="w-5 h-5 mr-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                            <span className="font-medium">{status.activeBookings} active booking{status.activeBookings > 1 ? 's' : ''}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {status && status.underMaintenance && (
+                        <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                          <div className="flex items-center text-sm text-amber-700 dark:text-amber-300">
+                            <svg className="w-5 h-5 mr-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                            <span className="font-medium">This room type is currently under maintenance</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button onClick={() => {
+                          const slug = (room.id || room.name.toLowerCase().trim().replace(/\s+/g, '-'));
+                          nextRouter.push(`/admin/room/${slug}/bookings`);
+                        }} className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition text-sm shadow-sm">
+                          View Bookings
+                        </button>
+                        <button onClick={() => { setEditingRoom({ id: room.id, name: room.name, price: room.price, description: room.description, perBed: room.perBed, maxGuests: room.maxGuests || 2, image: room.image, imageFile: null }); setIsEditModalOpen(true); }} className="px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition text-sm">
+                          Manage
+                        </button>
+                        <button onClick={() => {
+                          const slug = (room.id || room.name.toLowerCase().trim().replace(/\s+/g, '-'));
+                          nextRouter.push(`/admin/room/${slug}/maintenance`);
+                        }} className="px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition text-sm">
+                          Maintenance
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
 
-        {/* Add Room Modal */}
+        {/* Add Room Modal - Moved outside conditional to always be available */}
         {isAddModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setIsAddModalOpen(false);
+            }
+          }}>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold">Add New Room Type</h2>
-                <button onClick={() => setIsAddModalOpen(false)} className="text-gray-600 hover:text-gray-900">✕</button>
+                <button type="button" onClick={() => setIsAddModalOpen(false)} className="text-gray-600 hover:text-gray-900 text-2xl leading-none" aria-label="Close modal">✕</button>
               </div>
               <form onSubmit={async (e) => {
                 e.preventDefault();
-                if (!newRoom.name || !newRoom.price || !newRoom.description) {
+                if (!newRoom.name || !newRoom.price || !newRoom.description || !newRoom.maxGuests) {
                   Swal.fire({
                     icon: 'warning',
                     title: 'Required Fields',
-                    text: 'Please fill in name, price, and description.',
+                    text: 'Please fill in name, price, description, and max guests.',
                     confirmButtonColor: '#3b82f6'
                   });
                   return;
@@ -420,6 +479,7 @@ export default function RoomManagement() {
                     name: newRoom.name,
                     price: newRoom.price,
                     description: newRoom.description,
+                    maxGuests: newRoom.maxGuests || 2,
                   };
                   if (newRoom.perBed) payload.perBed = newRoom.perBed;
 
@@ -441,7 +501,7 @@ export default function RoomManagement() {
                   // Refresh list
                   await fetchRooms();
                   setIsAddModalOpen(false);
-                  setNewRoom({ name: '', price: '', description: '', perBed: '', imageFile: null });
+                  setNewRoom({ name: '', price: '', description: '', perBed: '', maxGuests: 2, imageFile: null });
 
                   if (uploadWarning) {
                     Swal.fire({
@@ -475,27 +535,33 @@ export default function RoomManagement() {
               }} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Room Name</label>
-                    <input value={newRoom.name} onChange={(e) => setNewRoom({ ...newRoom, name: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="e.g., Suite Room" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Room Name *</label>
+                    <input value={newRoom.name} onChange={(e) => setNewRoom({ ...newRoom, name: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="e.g., Suite Room" required />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Price</label>
-                    <input value={newRoom.price} onChange={(e) => setNewRoom({ ...newRoom, price: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="e.g., 1,200.00" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Price *</label>
+                    <input value={newRoom.price} onChange={(e) => setNewRoom({ ...newRoom, price: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="e.g., 1,200.00" required />
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Per Bed (optional)</label>
-                    <input value={newRoom.perBed} onChange={(e) => setNewRoom({ ...newRoom, perBed: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="e.g., / Bed" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Max Guests *</label>
+                    <input type="number" min="1" max="20" value={newRoom.maxGuests || 2} onChange={(e) => setNewRoom({ ...newRoom, maxGuests: parseInt(e.target.value) || 2 })} className="w-full border rounded-lg px-3 py-2" placeholder="e.g., 2" required />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Image</label>
-                    <input type="file" accept="image/*" onChange={(e) => setNewRoom({ ...newRoom, imageFile: e.target.files?.[0] || null })} className="w-full" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Per Bed (optional)</label>
+                    <input value={newRoom.perBed} onChange={(e) => setNewRoom({ ...newRoom, perBed: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="e.g., / Bed" />
+                    <p className="text-xs text-gray-500 mt-1">Add this if pricing is per bed (e.g., Dorm Room)</p>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                  <textarea value={newRoom.description} onChange={(e) => setNewRoom({ ...newRoom, description: e.target.value })} className="w-full border rounded-lg px-3 py-2" rows={4} placeholder="Describe the room type..." />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Image *</label>
+                  <input type="file" accept="image/*" onChange={(e) => setNewRoom({ ...newRoom, imageFile: e.target.files?.[0] || null })} className="w-full" required />
+                  <p className="text-xs text-gray-500 mt-1">Upload room image (will be stored in Firebase Storage)</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description *</label>
+                  <textarea value={newRoom.description} onChange={(e) => setNewRoom({ ...newRoom, description: e.target.value })} className="w-full border rounded-lg px-3 py-2" rows={4} placeholder="Describe the room type, amenities, and features..." required />
                 </div>
                 <div className="flex justify-end gap-3">
                   <button type="button" onClick={() => setIsAddModalOpen(false)} className="px-4 py-2 border rounded-lg">Cancel</button>
@@ -504,93 +570,6 @@ export default function RoomManagement() {
               </form>
             </div>
           </div>
-        )}
-        {/* Rooms Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {roomTypes.map((room, index) => {
-            const status = roomStatus[room.name];
-            return (
-            <div key={room.id || `${room.name}-${index}`} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg hover:border-gray-300 dark:hover:border-gray-600 transition-all">
-              {/* Room Image */}
-              <div className="relative h-64 w-full">
-                <Image
-                  src={room.image}
-                  alt={room.name}
-                  fill
-                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-                  loading="eager"
-                  className="object-cover"
-                />
-                {status && status.underMaintenance && (
-                  <>
-                    <div className="absolute inset-0 bg-black/30 z-10" />
-                    <div style={{position: 'absolute', top: 12, left: 12, zIndex: 20}} className="px-3 py-1.5 rounded-lg text-sm font-medium bg-amber-500 text-white">
-                      🔧 Under Maintenance
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="p-6">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{room.name}</h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                      <span className="font-bold text-blue-600 dark:text-blue-400 text-lg">₱{room.price}</span>
-                      {room.perBed ? <span className="text-gray-500 dark:text-gray-400"> {room.perBed}</span> : <span className="text-gray-500 dark:text-gray-400"> per night</span>}
-                    </p>
-                  </div>
-                  {getRoomStatusBadge(room.name)}
-                </div>
-
-                <p className="text-gray-600 dark:text-gray-400 text-sm mb-4 line-clamp-3">
-                  {room.description}
-                </p>
-                {status && status.activeBookings > 0 && (
-                  <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                    <div className="flex items-center text-sm text-blue-700 dark:text-blue-300">
-                      <svg className="w-5 h-5 mr-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                      </svg>
-                      <span className="font-medium">{status.activeBookings} active booking{status.activeBookings > 1 ? 's' : ''}</span>
-                    </div>
-                  </div>
-                )}
-
-                {status && status.underMaintenance && (
-                  <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-                    <div className="flex items-center text-sm text-amber-700 dark:text-amber-300">
-                      <svg className="w-5 h-5 mr-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      <span className="font-medium">This room type is currently under maintenance</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex gap-2">
-                  <button onClick={() => {
-                    const slug = (room.id || room.name.toLowerCase().trim().replace(/\s+/g, '-'));
-                    nextRouter.push(`/admin/room/${slug}/bookings`);
-                  }} className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition text-sm shadow-sm">
-                    View Bookings
-                  </button>
-                  <button onClick={() => { setEditingRoom({ id: room.id, name: room.name, price: room.price, description: room.description, perBed: room.perBed, image: room.image, imageFile: null }); setIsEditModalOpen(true); }} className="px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition text-sm">
-                    Manage
-                  </button>
-                  <button onClick={() => {
-                    const slug = (room.id || room.name.toLowerCase().trim().replace(/\s+/g, '-'));
-                    nextRouter.push(`/admin/room/${slug}/maintenance`);
-                  }} className="px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition text-sm">
-                    Maintenance
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-          })}
-        </div>
-        </>
         )}
       </AdminMainContent>
 
@@ -605,11 +584,11 @@ export default function RoomManagement() {
             <form onSubmit={async (e) => {
               e.preventDefault();
               if (!editingRoom) return;
-              if (!editingRoom.name || !editingRoom.price || !editingRoom.description) {
+              if (!editingRoom.name || !editingRoom.price || !editingRoom.description || !editingRoom.maxGuests) {
                 Swal.fire({
                   icon: 'warning',
                   title: 'Required Fields',
-                  text: 'Please fill in name, price, and description.',
+                  text: 'Please fill in name, price, description, and max guests.',
                   confirmButtonColor: '#3b82f6'
                 });
                 return;
@@ -628,6 +607,7 @@ export default function RoomManagement() {
                   name: editingRoom.name,
                   price: editingRoom.price,
                   description: editingRoom.description,
+                  maxGuests: editingRoom.maxGuests || 2,
                 };
                 if (editingRoom.perBed) payload.perBed = editingRoom.perBed;
                 if (imageUrl) payload.image = imageUrl;
@@ -659,30 +639,39 @@ export default function RoomManagement() {
             }} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Room Name</label>
-                  <input value={editingRoom.name} onChange={(e) => setEditingRoom({ ...editingRoom, name: e.target.value })} className="w-full border rounded-lg px-3 py-2" />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Room Name *</label>
+                  <input value={editingRoom.name} onChange={(e) => setEditingRoom({ ...editingRoom, name: e.target.value })} className="w-full border rounded-lg px-3 py-2" required />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Price</label>
-                  <input value={editingRoom.price} onChange={(e) => setEditingRoom({ ...editingRoom, price: e.target.value })} className="w-full border rounded-lg px-3 py-2" />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Price *</label>
+                  <input value={editingRoom.price} onChange={(e) => setEditingRoom({ ...editingRoom, price: e.target.value })} className="w-full border rounded-lg px-3 py-2" required />
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Per Bed (optional)</label>
-                  <input value={editingRoom.perBed || ''} onChange={(e) => setEditingRoom({ ...editingRoom, perBed: e.target.value })} className="w-full border rounded-lg px-3 py-2" />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Max Guests *</label>
+                  <input type="number" min="1" max="20" value={editingRoom.maxGuests || 2} onChange={(e) => setEditingRoom({ ...editingRoom, maxGuests: parseInt(e.target.value) || 2 })} className="w-full border rounded-lg px-3 py-2" required />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Replace Image</label>
-                  <input type="file" accept="image/*" onChange={(e) => setEditingRoom({ ...editingRoom, imageFile: e.target.files?.[0] || null })} className="w-full" />
-                  {editingRoom.image && (
-                    <p className="text-xs text-gray-500 mt-1">Current image will be kept unless you upload a new one.</p>
-                  )}
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Per Bed (optional)</label>
+                  <input value={editingRoom.perBed || ''} onChange={(e) => setEditingRoom({ ...editingRoom, perBed: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="e.g., / Bed" />
+                  <p className="text-xs text-gray-500 mt-1">Add this if pricing is per bed</p>
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <textarea value={editingRoom.description} onChange={(e) => setEditingRoom({ ...editingRoom, description: e.target.value })} className="w-full border rounded-lg px-3 py-2" rows={4} />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Replace Image</label>
+                <input type="file" accept="image/*" onChange={(e) => setEditingRoom({ ...editingRoom, imageFile: e.target.files?.[0] || null })} className="w-full" />
+                <p className="text-xs text-gray-500 mt-1">Leave empty to keep current image</p>
+                {editingRoom.image && (
+                  <div className="mt-2">
+                    <p className="text-xs text-gray-500 mb-1">Current image:</p>
+                    <img src={editingRoom.image} alt={editingRoom.name} className="w-32 h-32 object-cover rounded border" />
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description *</label>
+                <textarea value={editingRoom.description} onChange={(e) => setEditingRoom({ ...editingRoom, description: e.target.value })} className="w-full border rounded-lg px-3 py-2" rows={4} placeholder="Describe the room type, amenities, and features..." required />
               </div>
               <div className="flex justify-between items-center">
                 <button type="button" onClick={async () => {
@@ -705,7 +694,7 @@ export default function RoomManagement() {
                       didOpen: () => {
                         Swal.showLoading();
                       },
-                      willClose: () => {}
+                      willClose: () => { }
                     });
                     const id = editingRoom.id || editingRoom.name.toLowerCase().trim().replace(/\s+/g, '-');
                     if (editingRoom.image && editingRoom.image.startsWith('https://')) {
@@ -716,10 +705,10 @@ export default function RoomManagement() {
                           const decodedPath = decodeURIComponent(pathMatch[1]);
                           if (decodedPath.startsWith('rooms/')) {
                             const imgRef = ref(storage, decodedPath);
-                            await deleteObject(imgRef).catch(() => {});
+                            await deleteObject(imgRef).catch(() => { });
                           }
                         }
-                      } catch {}
+                      } catch { }
                     }
                     await deleteDoc(doc(db, 'rooms', id));
                     await fetchRooms();

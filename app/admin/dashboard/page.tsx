@@ -8,6 +8,7 @@ import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { auth, db } from '@/lib/firebase';
 import { collection, query, orderBy, onSnapshot, where, Timestamp, getDocs } from 'firebase/firestore';
+import { Room } from '@/lib/types/room';
 import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
 import { logInfo, logError } from '@/lib/logger';
 
@@ -49,9 +50,8 @@ export default function AdminDashboard() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [maintenanceTasks, setMaintenanceTasks] = useState<MaintenanceTask[]>([]);
   const [loading, setLoading] = useState(true);
-  // Known room types used as a fallback
-  const ROOM_NAMES = ['Suite Room', 'Triple Room', 'Twin Room', 'Double Room', 'Dorm Room'];
-  const [totalRooms, setTotalRooms] = useState<number>(ROOM_NAMES.length);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [totalRooms, setTotalRooms] = useState<number>(0);
   const [roomTypes, setRoomTypes] = useState<string[]>([]);
   const [underMaintenance, setUnderMaintenance] = useState<number>(0);
   const [roomsUnderMaintenance, setRoomsUnderMaintenance] = useState<Set<string>>(new Set());
@@ -137,15 +137,33 @@ export default function AdminDashboard() {
           
           setRoomTypes(uniqueRoomNames);
           setTotalRooms(uniqueRoomNames.length);
+          
+          // Also store full room data
+          const roomsData: Room[] = [];
+          snapshot.forEach((doc) => {
+            const data = doc.data();
+            roomsData.push({
+              id: doc.id,
+              name: data.name,
+              price: data.price,
+              description: data.description || '',
+              image: data.image || '',
+              perBed: data.perBed,
+              maxGuests: data.maxGuests || 2,
+            } as Room);
+          });
+          setRooms(roomsData);
         } else {
-          // Fallback to known room types if collection is empty
-          setRoomTypes(ROOM_NAMES);
-          setTotalRooms(ROOM_NAMES.length);
+          // If collection is empty, set empty arrays
+          setRoomTypes([]);
+          setTotalRooms(0);
+          setRooms([]);
         }
       } catch (error) {
-        console.error('Error fetching rooms from Firestore:', error);
-        setRoomTypes(ROOM_NAMES);
-        setTotalRooms(ROOM_NAMES.length);
+        logError('Error fetching rooms from Firestore:', error);
+        setRoomTypes([]);
+        setTotalRooms(0);
+        setRooms([]);
       }
     };
 
