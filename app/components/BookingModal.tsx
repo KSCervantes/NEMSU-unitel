@@ -332,7 +332,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
   };
 
   // Focus trap for modal (must be called before any early returns to follow Rules of Hooks)
-  const modalRef = useFocusTrap(isOpen);
+  const modalRef = useFocusTrap<HTMLDivElement>(isOpen);
 
   if (!isOpen) return null;
 

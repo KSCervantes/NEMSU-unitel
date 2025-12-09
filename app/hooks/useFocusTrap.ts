@@ -6,8 +6,8 @@ import { useEffect, useRef } from 'react';
  * Custom hook for focus trapping in modals
  * Keeps focus within the modal when using keyboard navigation
  */
-export function useFocusTrap(isOpen: boolean) {
-  const containerRef = useRef<HTMLElement>(null);
+export function useFocusTrap<T extends HTMLElement = HTMLDivElement>(isOpen: boolean) {
+  const containerRef = useRef<T>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
 
   useEffect(() => {

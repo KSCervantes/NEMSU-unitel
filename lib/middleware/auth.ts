@@ -6,7 +6,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/firebase';
 import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
-import { verifyIdToken } from '@/lib/firebase-admin';
 
 /**
  * Verify admin authentication from request headers

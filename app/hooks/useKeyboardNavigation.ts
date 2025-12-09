@@ -28,7 +28,7 @@ export function useKeyboardNavigation() {
     // Submit forms on Enter (when focus is on submit button)
     if (e.key === 'Enter' && e.target instanceof HTMLElement) {
       const form = e.target.closest('form');
-      if (form && e.target.tagName === 'BUTTON' && e.target.type === 'submit') {
+      if (form && e.target instanceof HTMLButtonElement && e.target.type === 'submit') {
         // Allow default behavior
         return;
       }

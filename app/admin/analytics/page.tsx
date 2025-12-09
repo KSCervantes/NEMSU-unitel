@@ -99,7 +99,14 @@ export default function Analytics() {
 
   // Colors for charts
   const roomColors = ['#EF4444', '#3B82F6', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6'];
-  const statusColors = { pending: '#F59E0B', confirmed: '#10B981', cancelled: '#EF4444' };
+  // Type-safe color mapping for status keys
+  type StatusKey = keyof StatusStats;
+  const statusColors: Record<StatusKey, string> = {
+    pending: '#F59E0B',
+    confirmed: '#10B981',
+    cancelled: '#EF4444',
+    completed: '#3B82F6', // Blue for completed status
+  };
 
   // Calculate max value for bar chart scaling
   const roomValues = Object.values(roomStats);
@@ -174,6 +181,7 @@ export default function Analytics() {
                   {(() => {
                     let currentAngle = 0;
                     return Object.entries(statusStats).map(([status, count]) => {
+                      const statusKey = status as StatusKey;
                       const percentage = (count / totalStatus) * 100;
                       const angle = (percentage / 100) * 360;
                       const startAngle = currentAngle;
@@ -197,7 +205,7 @@ export default function Analytics() {
                         <path
                           key={status}
                           d={`M ${centerX} ${centerY} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`}
-                          fill={statusColors[status as keyof StatusStats]}
+                          fill={statusColors[statusKey]}
                           className="hover:opacity-90 transition-all duration-300 cursor-pointer hover:drop-shadow-lg"
                           style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))' }}
                         />
@@ -218,16 +226,19 @@ export default function Analytics() {
             {/* Legend */}
             <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
               <div className="flex flex-wrap gap-3 justify-center">
-                {Object.entries(statusStats).map(([status, count]) => (
-                  <div key={status} className="flex items-center gap-2 px-2 py-1 bg-gray-50 dark:bg-gray-700/50 rounded text-xs">
-                    <div
-                      className="w-2 h-2 rounded-full"
-                      style={{ backgroundColor: statusColors[status as keyof StatusStats] }}
-                    ></div>
-                    <span className="text-gray-700 dark:text-gray-300 capitalize">{status}</span>
-                    <span className="text-gray-500 dark:text-gray-400">({count})</span>
-                  </div>
-                ))}
+                {Object.entries(statusStats).map(([status, count]) => {
+                  const statusKey = status as StatusKey;
+                  return (
+                    <div key={status} className="flex items-center gap-2 px-2 py-1 bg-gray-50 dark:bg-gray-700/50 rounded text-xs">
+                      <div
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: statusColors[statusKey] }}
+                      ></div>
+                      <span className="text-gray-700 dark:text-gray-300 capitalize">{status}</span>
+                      <span className="text-gray-500 dark:text-gray-400">({count})</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -307,6 +318,7 @@ export default function Analytics() {
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Status Distribution</h3>
             <div className="flex items-end justify-around h-48 px-4">
               {Object.entries(statusStats).map(([status, count]) => {
+                const statusKey = status as StatusKey;
                 const height = (count / Math.max(...Object.values(statusStats), 1)) * 100;
                 return (
                   <div key={status} className="flex flex-col items-center gap-2 flex-1 max-w-[100px]">
@@ -315,7 +327,7 @@ export default function Analytics() {
                       className="w-full rounded-t"
                       style={{
                         height: `${height}%`,
-                        backgroundColor: statusColors[status as keyof StatusStats],
+                        backgroundColor: statusColors[statusKey],
                         minHeight: '20px'
                       }}
                     ></div>
