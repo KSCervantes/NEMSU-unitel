@@ -213,8 +213,8 @@ export default function Calendar() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
-                  {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
-                </h2>
+                {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
+              </h2>
               </div>
               <div className="flex gap-2">
                 <button

@@ -176,7 +176,7 @@ export default function Home() {
                 const contactSection = document.getElementById('contact');
                 contactSection?.scrollIntoView({ behavior: 'smooth' });
               }}
-              className="bg-amber-400 text-blue-900 px-6 sm:px-8 py-3 sm:py-4 rounded-xl font-bold text-sm sm:text-base hover:bg-amber-500 transition-all shadow-lg hover:shadow-amber-400/50 hover:scale-105 inline-flex items-center justify-center gap-2 w-full sm:w-auto"
+              className="btn-book-now w-full sm:w-auto inline-flex items-center justify-center gap-2"
             >
               Contact Us
               <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -188,7 +188,7 @@ export default function Home() {
                 const roomsSection = document.getElementById('rooms');
                 roomsSection?.scrollIntoView({ behavior: 'smooth' });
               }}
-              className="bg-transparent border-2 border-white text-white px-6 sm:px-8 py-3 sm:py-4 rounded-xl font-bold text-sm sm:text-base hover:bg-white/10 transition-all shadow-lg w-full sm:w-auto"
+              className="btn-book-now w-full sm:w-auto inline-flex items-center justify-center gap-2"
             >
               Explore Our Rooms
             </button>
@@ -197,7 +197,7 @@ export default function Home() {
       </section>
 
       {/* Rooms Section */}
-      <section id="rooms" className="py-20 px-4 bg-white">
+      <section id="rooms" className="py-20 px-4 dotted-bg">
         <div className="container mx-auto max-w-7xl">
           <div className="text-center mb-16">
             <h2 className="font-poppins font-bold text-4xl md:text-5xl mb-4" style={{ color: '#112240' }}>
@@ -245,7 +245,7 @@ export default function Home() {
       </section>
 
       {/* About Section */}
-      <section id="about" className="py-20 px-4 bg-gray-50">
+      <section id="about" className="py-20 px-4 dotted-bg">
         <div className="container mx-auto max-w-7xl">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             <div>
@@ -329,7 +329,7 @@ export default function Home() {
       </section>
 
       {/* Contact Section */}
-      <section id="contact" className="py-20 px-4 text-black">
+      <section id="contact" className="py-20 px-4 text-black dotted-bg">
         <div className="container mx-auto max-w-7xl">
           <div className="text-center mb-16">
             <h2 className="font-poppins font-bold text-4xl md:text-5xl mb-4 text-blue-900" style={{ color: '#112240' }}>
@@ -381,7 +381,7 @@ export default function Home() {
         <div className="container mx-auto max-w-7xl text-center">
           <div className="flex items-center justify-center gap-3 mb-4">
             <Image
-              src="/img/LOGO.png"
+              src="/img/NEMSU_LOGOO.webp"
               alt="UNITEL Logo"
               width={40}
               height={40}

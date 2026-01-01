@@ -90,10 +90,7 @@ export default function RoomCard({ name, price, image, description, perBed, onCl
             </div>
             <button
               onClick={onClick}
-              className={`px-4 sm:px-6 md:px-8 py-2 sm:py-3 md:py-4 rounded-lg md:rounded-xl font-bold text-xs sm:text-sm md:text-base transition-all whitespace-nowrap transform duration-300 text-white shadow-lg hover:shadow-xl active:scale-95 sm:hover:scale-105`}
-              style={{ backgroundColor: '#1a3a52' }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#0f2537'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#1a3a52'; }}
+              className="btn-book-now whitespace-nowrap"
             >
               Book Now →
             </button>

@@ -3,6 +3,9 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --btn-book-now-bg: #fbbf24;
+  --btn-book-now-shadow: #d9920f;
+  --btn-book-now-text: #1e3a8a;
 }
 
 @theme inline {
@@ -185,4 +188,87 @@ button, a, input, select, textarea {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+/* Light Theme Dotted Background Pattern */
+.dotted-bg {
+  background-color: #f8f8f8;
+  background-image: radial-gradient(rgba(0, 0, 0, 0.08) 1.5px, transparent 1.5px);
+  background-size: 30px 30px;
+  background-position: 0 0;
+  position: relative;
+}
+
+.dotted-bg::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.3) 100%);
+  pointer-events: none;
+}
+
+/* Custom Book Now Button Style - High specificity to override all other styles */
+button.btn-book-now,
+.btn-book-now,
+button[class*="btn-book-now"],
+[class*="btn-book-now"],
+#rooms button.btn-book-now,
+#rooms .btn-book-now,
+section button.btn-book-now,
+section .btn-book-now {
+  padding: 8px 18px !important;
+  border-radius: 10px !important;
+  border: 0 !important;
+  background-color: var(--btn-book-now-bg) !important;
+  background: var(--btn-book-now-bg) !important;
+  letter-spacing: 1.5px !important;
+  font-size: 12px !important;
+  transition: all 0.3s ease !important;
+  box-shadow: var(--btn-book-now-shadow) 0px 10px 0px 0px !important;
+  color: var(--btn-book-now-text) !important;
+  cursor: pointer !important;
+  font-weight: 600 !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+button.btn-book-now:hover,
+.btn-book-now:hover,
+button[class*="btn-book-now"]:hover,
+[class*="btn-book-now"]:hover,
+#rooms button.btn-book-now:hover,
+#rooms .btn-book-now:hover,
+section button.btn-book-now:hover,
+section .btn-book-now:hover {
+  box-shadow: var(--btn-book-now-shadow) 0px 7px 0px 0px !important;
+  background-color: var(--btn-book-now-bg) !important;
+  background: var(--btn-book-now-bg) !important;
+  color: var(--btn-book-now-text) !important;
+}
+
+button.btn-book-now:active,
+.btn-book-now:active,
+button[class*="btn-book-now"]:active,
+[class*="btn-book-now"]:active,
+button.btn-book-now:focus,
+.btn-book-now:focus,
+button[class*="btn-book-now"]:focus,
+[class*="btn-book-now"]:focus,
+#rooms button.btn-book-now:active,
+#rooms .btn-book-now:active,
+#rooms button.btn-book-now:focus,
+#rooms .btn-book-now:focus,
+section button.btn-book-now:active,
+section .btn-book-now:active,
+section button.btn-book-now:focus,
+section .btn-book-now:focus {
+  background-color: var(--btn-book-now-bg) !important;
+  background: var(--btn-book-now-bg) !important;
+  box-shadow: var(--btn-book-now-shadow) 0px 0px 0px 0px !important;
+  transform: translateY(5px) !important;
+  transition: 200ms !important;
+  color: var(--btn-book-now-text) !important;
 }

@@ -33,7 +33,7 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
       <div className="container mx-auto px-3 sm:px-4 md:px-6 lg:px-8 flex items-center justify-between max-w-7xl">
         <div className="flex items-center gap-2 sm:gap-3">
           <Image
-            src="/img/LOGO.webp"
+            src="/img/NEMSU_LOGOO.webp"
             alt="UNITEL Logo"
             width={80}
             height={80}
@@ -62,9 +62,9 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
           ))}
           <button
             onClick={onBookNowClick}
-            className="bg-amber-400 text-blue-900 px-5 lg:px-6 py-2 lg:py-2.5 rounded-full font-semibold text-sm lg:text-base hover:bg-amber-500 transition-all active:scale-95"
+            className="btn-book-now"
           >
-            BOOK NOW
+            Visit Now
           </button>
         </div>
 
@@ -109,7 +109,7 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
               setIsMobileMenuOpen(false);
               onBookNowClick?.();
             }}
-            className="w-full bg-amber-400 text-blue-900 px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-semibold text-xs sm:text-sm text-center hover:bg-amber-500 transition-all active:scale-95 mt-2"
+            className="w-full btn-book-now text-center mt-2"
           >
             BOOK NOW
           </button>

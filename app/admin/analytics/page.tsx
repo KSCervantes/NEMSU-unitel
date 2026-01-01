@@ -29,7 +29,6 @@ export default function Analytics() {
   const [roomStats, setRoomStats] = useState<RoomStats>({});
   const [statusStats, setStatusStats] = useState<StatusStats>({ pending: 0, confirmed: 0, cancelled: 0, completed: 0 });
   const [totalBookings, setTotalBookings] = useState(0);
-  const [totalRevenue, setTotalRevenue] = useState(0);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -41,7 +40,6 @@ export default function Analytics() {
     const unsubscribe = onSnapshot(bookingsQuery, (snapshot) => {
       const roomCounts: RoomStats = {};
       const statusCounts = { pending: 0, confirmed: 0, cancelled: 0, completed: 0 };
-      let revenue = 0;
 
       snapshot.forEach((doc) => {
         const data = doc.data();
@@ -55,35 +53,11 @@ export default function Analytics() {
         if (data.status) {
           statusCounts[data.status as keyof StatusStats] = (statusCounts[data.status as keyof StatusStats] || 0) + 1;
         }
-
-        // Calculate revenue from confirmed bookings only
-        if (data.status === 'confirmed') {
-          // Payment data is stored in payment.total (from BookingModal.tsx line 382)
-          // Structure: payment: { nights, guests, basePrice, extraFee, total }
-          let bookingRevenue = 0;
-          
-          if (data.payment && typeof data.payment === 'object' && 'total' in data.payment) {
-            // Primary: Use payment.total (current booking structure)
-            bookingRevenue = parseFloat(data.payment.total.toString()) || 0;
-          } else if (data.totalPrice) {
-            // Fallback 1: totalPrice (legacy field)
-            bookingRevenue = parseFloat(data.totalPrice.toString()) || 0;
-          } else if (data.totalAmount) {
-            // Fallback 2: totalAmount (alternative legacy field)
-            bookingRevenue = parseFloat(data.totalAmount.toString()) || 0;
-          }
-          
-          // Only add if revenue is valid and positive
-          if (!isNaN(bookingRevenue) && bookingRevenue > 0) {
-            revenue += bookingRevenue;
-          }
-        }
       });
 
       setRoomStats(roomCounts);
       setStatusStats(statusCounts);
       setTotalBookings(snapshot.size);
-      setTotalRevenue(revenue);
     });
 
     return () => unsubscribe();
@@ -342,14 +316,10 @@ export default function Analytics() {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
             <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Bookings</div>
             <div className="text-3xl font-semibold text-gray-900 dark:text-white">{totalBookings}</div>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-            <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Revenue</div>
-            <div className="text-3xl font-semibold text-gray-900 dark:text-white">₱{totalRevenue.toLocaleString()}</div>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
             <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Confirmed</div>

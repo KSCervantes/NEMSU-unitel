@@ -101,54 +101,34 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     };
   };
 
-  // Fetch rooms from Firestore when modal opens
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const fetchRooms = async () => {
-      try {
-        setRoomsLoading(true);
-        const roomsRef = collection(db, 'rooms');
-        const snapshot = await getDocs(roomsRef);
-
-        const roomsData: Room[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          roomsData.push({
-            id: doc.id,
-            name: data.name,
-            price: data.price,
-            priceNumber: data.priceNumber || parseFloat(data.price?.replace(/,/g, '') || '0'),
-            description: data.description,
-            image: data.image,
-            perBed: data.perBed,
-            maxGuests: data.maxGuests || 2,
-            slug: data.slug || doc.id,
-            createdAt: data.createdAt,
-          } as Room);
-        });
-
-        // Deduplicate by name (in case of duplicates)
-        const unique = Array.from(
-          new Map(roomsData.map((r) => [r.name, r])).values()
-        );
-        setRooms(unique);
-      } catch (error) {
-        logError('Error fetching rooms:', error);
-      } finally {
-        setRoomsLoading(false);
-      }
-    };
-
-    fetchRooms();
-  }, [isOpen]);
-
   // Update room when selectedRoom prop changes
   useEffect(() => {
     if (selectedRoom) {
       setFormData(prev => ({ ...prev, room: selectedRoom }));
     }
   }, [selectedRoom]);
+
+  // Fetch rooms from Firestore when modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+    const fetchRooms = async () => {
+      try {
+        setRoomsLoading(true);
+        const roomsSnapshot = await getDocs(collection(db, 'rooms'));
+        const roomsData: Room[] = [];
+        roomsSnapshot.forEach((doc) => roomsData.push({ id: doc.id, ...doc.data() } as Room));
+        // Deduplicate by room name to avoid duplicate options
+        const unique = Array.from(new Map(roomsData.map((r) => [r.name, r])).values());
+        setRooms(unique);
+      } catch (error) {
+        logError('Error fetching rooms for booking modal:', error);
+        setRooms([]);
+      } finally {
+        setRoomsLoading(false);
+      }
+    };
+    fetchRooms();
+  }, [isOpen]);
 
   // Subscribe to bookings in real time to block overlapping dates
   useEffect(() => {
@@ -995,6 +975,8 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                 <option value="">Select a room</option>
                 {roomsLoading ? (
                   <option value="" disabled>Loading rooms...</option>
+                ) : rooms.length === 0 ? (
+                  <option value="" disabled>No rooms available</option>
                 ) : (
                   rooms.map((room) => (
                     <option key={room.id || room.name} value={room.name}>

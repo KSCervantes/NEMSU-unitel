@@ -942,7 +942,7 @@ export default function Reservations() {
             onClose={handleCloseModal}
             title={editingBooking ? 'Edit Reservation' : 'Create New Reservation'}
           >
-            <form onSubmit={handleSubmit} className="p-6 space-y-6">
+              <form onSubmit={handleSubmit} className="p-6 space-y-6">
               {/* CSRF Token */}
               <input type="hidden" name="csrf_token" value={getCSRFToken() || ''} />
                 {/* Guest Information */}
@@ -1194,7 +1194,7 @@ export default function Reservations() {
                     {editingBooking ? 'Update Reservation' : 'Create Reservation'}
                   </button>
                 </div>
-            </form>
+              </form>
           </ModalWithFocusTrap>
         )}
       </AdminMainContent>

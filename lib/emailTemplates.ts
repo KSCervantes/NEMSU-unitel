@@ -1,5 +1,7 @@
 // Email template utilities for NEMSU Hotel booking notifications
 
+const NEMSU_LOGO = 'https://raw.githubusercontent.com/KSCervantes/NEMSU-unitel/main/public/img/NEMSU_LOGOO.webp';
+
 export const generateBookingConfirmationEmail = (
   guestName: string,
   bookingId: string,
@@ -16,6 +18,8 @@ export const generateBookingConfirmationEmail = (
     body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
     .container { max-width: 600px; margin: 0 auto; padding: 20px; }
     .header { background: linear-gradient(135deg, #112240 0%, #1e3a8a 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .logo { margin-bottom: 20px; }
+    .logo img { max-width: 80px; height: auto; }
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
     .booking-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
@@ -29,7 +33,9 @@ export const generateBookingConfirmationEmail = (
 <body>
   <div class="container">
     <div class="header">
-
+      <div class="logo">
+        <img src="${NEMSU_LOGO}" alt="NEMSU Logo" />
+      </div>
       <h1 style="margin: 0;">NEMSU Hotel</h1>
       <h2 style="margin: 10px 0 0 0; font-weight: normal;">Booking Received</h2>
     </div>
@@ -101,6 +107,8 @@ export const generateBookingApprovedEmail = (
     body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
     .container { max-width: 600px; margin: 0 auto; padding: 20px; }
     .header { background: linear-gradient(135deg, #059669 0%, #10b981 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .logo { margin-bottom: 20px; }
+    .logo img { max-width: 80px; height: auto; }
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
     .booking-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
@@ -115,7 +123,9 @@ export const generateBookingApprovedEmail = (
 <body>
   <div class="container">
     <div class="header">
-
+      <div class="logo">
+        <img src="${NEMSU_LOGO}" alt="NEMSU Logo" />
+      </div>
       <h1 style="margin: 0;">NEMSU Hotel</h1>
       <h2 style="margin: 10px 0 0 0; font-weight: normal;">Booking Confirmed!</h2>
     </div>
@@ -196,10 +206,8 @@ export const generateBookingRejectedEmail = (
 <!DOCTYPE html>
 <html>
 <head>
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+  <stlogo { margin-bottom: 20px; }
+    .logo img { max-width: 80px; height: auto; }
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
     .booking-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
@@ -211,6 +219,12 @@ export const generateBookingRejectedEmail = (
     .alternative-box { background: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; margin: 20px 0; border-radius: 4px; }
   </style>
 </head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">
+        <img src="${NEMSU_LOGO}" alt="NEMSU Logo" />
+      </div></head>
 <body>
   <div class="container">
     <div class="header">

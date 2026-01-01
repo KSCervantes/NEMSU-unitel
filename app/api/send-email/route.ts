@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     // Log error (in production, send to error tracking service)
     if (process.env.NODE_ENV === 'development') {
-      console.error('Email sending error:', error);
+    console.error('Email sending error:', error);
     }
     return NextResponse.json(
       { error: 'Failed to send email', details: error.message },
