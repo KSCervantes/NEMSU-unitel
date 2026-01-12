@@ -1,12 +1,13 @@
 "use client";
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { auth, db, storage } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase';
 import { collection, onSnapshot, query, where, orderBy, limit, doc, getDoc, setDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { useSidebar } from '../context/SidebarContext';
+import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
 
 interface Activity {
   id: string;
@@ -32,11 +33,13 @@ export default function Header() {
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [recentActivities, setRecentActivities] = useState<Activity[]>([]);
   const [viewedNotifications, setViewedNotifications] = useState<Set<string>>(new Set());
+  const viewedNotificationsRef = useRef<Set<string>>(new Set());
+  const [canAccessData, setCanAccessData] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile>({
-    displayName: 'Admin User',
-    email: 'admin@unitel.com',
+    displayName: '',
+    email: '',
     photoURL: null,
-    initials: 'A'
+    initials: ''
   });
 
   const handleLogout = async () => {
@@ -51,68 +54,86 @@ export default function Header() {
   };
 
   // Theme handling removed
-
   useEffect(() => {
-    // Get user profile from Firebase Auth and load viewed notifications
     const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
-      if (user) {
-        const getInitials = (name: string) => {
-          const parts = name.split(' ');
-          if (parts.length >= 2) {
-            return parts[0][0] + parts[1][0];
-          }
-          return parts[0][0];
-        };
+      if (!user) {
+        setCanAccessData(false);
+        return;
+      }
 
-        setUserProfile({
-          displayName: user.displayName || 'Admin User',
-          email: user.email || 'admin@unitel.com',
-          photoURL: user.photoURL,
-          initials: user.displayName ? getInitials(user.displayName) : (user.email ? user.email[0].toUpperCase() : 'A')
-        });
+      const email = user.email || '';
 
-        // Load viewed notifications from Firebase
-        if (user.email) {
-          try {
-            const notificationsRef = doc(db, 'adminNotifications', user.email);
-            const notificationsSnap = await getDoc(notificationsRef);
-            
-            if (notificationsSnap.exists()) {
-              const data = notificationsSnap.data();
-              const viewedIds = data.viewedIds || [];
-              setViewedNotifications(new Set(viewedIds));
-            } else {
-              // Create document if it doesn't exist
-              await setDoc(notificationsRef, {
-                viewedIds: [],
-                lastUpdated: serverTimestamp()
-              });
-              setViewedNotifications(new Set());
-            }
-          } catch (error) {
-            console.error('Error loading viewed notifications from Firebase:', error);
-            setViewedNotifications(new Set());
-          }
+      if (!isNemsuEmail(email) || !isAuthorizedAdmin(email)) {
+        await signOut(auth);
+        sessionStorage.removeItem('adminAuth');
+        sessionStorage.removeItem('adminEmail');
+        setCanAccessData(false);
+        router.push('/admin');
+        return;
+      }
+
+      const getInitials = (name: string) => {
+        const parts = name.split(' ');
+        if (parts.length >= 2) {
+          return parts[0][0] + parts[1][0];
         }
+        return parts[0][0];
+      };
+
+      setUserProfile({
+        displayName: user.displayName || 'Admin User',
+        email,
+        photoURL: user.photoURL,
+        initials: user.displayName ? getInitials(user.displayName) : (email ? email[0].toUpperCase() : 'A'),
+      });
+
+      try {
+        const notificationsRef = doc(db, 'adminNotifications', email);
+        const notificationsSnap = await getDoc(notificationsRef);
+
+        if (notificationsSnap.exists()) {
+          const data = notificationsSnap.data();
+          const viewedIds = data.viewedIds || [];
+          setViewedNotifications(new Set(viewedIds));
+        } else {
+          await setDoc(notificationsRef, {
+            viewedIds: [],
+            lastUpdated: serverTimestamp(),
+          });
+          setViewedNotifications(new Set());
+        }
+        setCanAccessData(true);
+      } catch (error) {
+        console.error('Error loading viewed notifications from Firebase:', error);
+        setViewedNotifications(new Set());
+        setCanAccessData(false);
       }
     });
 
-    // Live count of pending reservations (only unread ones)
-    const q = query(collection(db, 'bookings'), where('status', '==', 'pending'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      // Count only unread notifications
+    return () => unsubscribeAuth();
+  }, [router]);
+
+  useEffect(() => {
+    viewedNotificationsRef.current = viewedNotifications;
+  }, [viewedNotifications]);
+
+  useEffect(() => {
+    if (!canAccessData) return;
+
+    const pendingQuery = query(collection(db, 'bookings'), where('status', '==', 'pending'));
+    const unsubscribePending = onSnapshot(pendingQuery, (snapshot) => {
       let unread = 0;
-      snapshot.forEach((doc) => {
-        if (!viewedNotifications.has(doc.id)) {
+      snapshot.forEach((docSnap) => {
+        if (!viewedNotificationsRef.current.has(docSnap.id)) {
           unread++;
         }
       });
       setUnreadCount(unread);
     }, (err) => {
       console.error('Notifications listener error:', err);
+      setUnreadCount(0);
     });
 
-    // Listen to recent booking activities
     const activitiesQuery = query(
       collection(db, 'bookings'),
       orderBy('createdAt', 'desc'),
@@ -120,20 +141,20 @@ export default function Header() {
     );
     const unsubscribeActivities = onSnapshot(activitiesQuery, (snapshot) => {
       const activities: Activity[] = [];
-      snapshot.forEach((doc) => {
-        activities.push({ id: doc.id, ...doc.data() } as Activity);
+      snapshot.forEach((docSnap) => {
+        activities.push({ id: docSnap.id, ...docSnap.data() } as Activity);
       });
       setRecentActivities(activities);
     }, (err) => {
       console.error('Activities listener error:', err);
+      setRecentActivities([]);
     });
 
     return () => {
-      unsubscribeAuth();
-      unsubscribe();
+      unsubscribePending();
       unsubscribeActivities();
     };
-  }, [viewedNotifications]);
+  }, [canAccessData]);
 
   const getTimeAgo = (timestamp: any) => {
     if (!timestamp) return 'Recently';
@@ -150,6 +171,51 @@ export default function Header() {
     return `${days}d ago`;
   };
 
+  const getStatusMeta = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return {
+          label: 'New Reservation',
+          bgClass: 'bg-amber-100 dark:bg-amber-900/30',
+          icon: (
+            <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          ),
+        };
+      case 'confirmed':
+        return {
+          label: 'Booking Confirmed',
+          bgClass: 'bg-green-100 dark:bg-green-900/30',
+          icon: (
+            <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          ),
+        };
+      case 'completed':
+        return {
+          label: 'Booking Completed',
+          bgClass: 'bg-blue-100 dark:bg-blue-900/30',
+          icon: (
+            <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          ),
+        };
+      case 'cancelled':
+      default:
+        return {
+          label: 'Booking Cancelled',
+          bgClass: 'bg-red-100 dark:bg-red-900/30',
+          icon: (
+            <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          ),
+        };
+    }
+  };
   return (
     <header className="sticky top-0 z-30 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
       <div className="flex items-center justify-between px-4 sm:px-6 py-3">
@@ -177,14 +243,14 @@ export default function Header() {
                 if (!isNotificationOpen && userProfile.email) {
                   const newViewed = new Set(viewedNotifications);
                   const newIds: string[] = [];
-                  
+
                   recentActivities.forEach(activity => {
                     if (!newViewed.has(activity.id)) {
                       newViewed.add(activity.id);
                       newIds.push(activity.id);
                     }
                   });
-                  
+
                   if (newIds.length > 0) {
                     setViewedNotifications(newViewed);
                     // Save to Firebase
@@ -243,6 +309,7 @@ export default function Header() {
                     {recentActivities.length > 0 ? (
                       recentActivities.map((activity) => {
                         const isViewed = viewedNotifications.has(activity.id);
+                        const statusMeta = getStatusMeta(activity.status);
                         return (
                         <div
                           key={activity.id}
@@ -255,7 +322,7 @@ export default function Header() {
                               const newViewed = new Set(viewedNotifications);
                               newViewed.add(activity.id);
                               setViewedNotifications(newViewed);
-                              
+
                               // Save to Firebase
                               try {
                                 const notificationsRef = doc(db, 'adminNotifications', userProfile.email);
@@ -267,7 +334,7 @@ export default function Header() {
                                 console.error('Error updating viewed notification in Firebase:', error);
                               }
                             }
-                            
+
                             setIsNotificationOpen(false);
                             router.push('/admin/reservations');
                           }}
@@ -276,32 +343,12 @@ export default function Header() {
                             <div className="absolute top-3 right-3 w-2 h-2 bg-blue-500 rounded-full"></div>
                           )}
                           <div className="flex items-start gap-3">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                              activity.status === 'pending' ? 'bg-amber-100 dark:bg-amber-900/30' :
-                              activity.status === 'confirmed' ? 'bg-green-100 dark:bg-green-900/30' :
-                              'bg-red-100 dark:bg-red-900/30'
-                            }`}>
-                              {activity.status === 'pending' && (
-                                <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                              )}
-                              {activity.status === 'confirmed' && (
-                                <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                              )}
-                              {activity.status === 'cancelled' && (
-                                <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                              )}
+                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${statusMeta.bgClass}`}>
+                              {statusMeta.icon}
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
-                                {activity.status === 'pending' ? 'New Reservation' :
-                                 activity.status === 'confirmed' ? 'Booking Confirmed' :
-                                 'Booking Cancelled'}
+                                {statusMeta.label}
                               </p>
                               <p className="text-sm text-gray-600 truncate mt-0.5">
                                 {activity.name} {activity.surname} - {activity.room}

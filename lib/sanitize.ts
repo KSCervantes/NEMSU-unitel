@@ -5,6 +5,16 @@
 
 import DOMPurify from 'dompurify';
 
+// Basic server-safe escape when DOMPurify cannot run (no window)
+function escapeHtmlFallback(dirty: string): string {
+  return dirty
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * Sanitize HTML content to prevent XSS attacks
  * @param dirty - The potentially unsafe HTML string
@@ -12,8 +22,8 @@ import DOMPurify from 'dompurify';
  */
 export function sanitizeHtml(dirty: string): string {
   if (typeof window === 'undefined') {
-    // Server-side: return as-is (DOMPurify requires DOM)
-    return dirty;
+    // Server-side: fall back to minimal escaping
+    return escapeHtmlFallback(dirty);
   }
   return DOMPurify.sanitize(dirty, {
     ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'p', 'br', 'ul', 'ol', 'li'],
@@ -29,7 +39,7 @@ export function sanitizeHtml(dirty: string): string {
  */
 export function sanitizeText(dirty: string): string {
   if (typeof window === 'undefined') {
-    return dirty;
+    return escapeHtmlFallback(dirty);
   }
   return DOMPurify.sanitize(dirty, { ALLOWED_TAGS: [] });
 }
@@ -41,8 +51,7 @@ export function sanitizeText(dirty: string): string {
  */
 export function sanitizeAttribute(dirty: string): string {
   if (typeof window === 'undefined') {
-    return dirty;
+    return escapeHtmlFallback(dirty);
   }
   return DOMPurify.sanitize(dirty, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
 }
-

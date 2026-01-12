@@ -130,14 +130,14 @@ export default function AdminDashboard() {
           // Get all room names and deduplicate (count unique room types only)
           const allRoomNames = snapshot.docs.map(doc => doc.data().name).filter(Boolean);
           const uniqueRoomNames = Array.from(new Set(allRoomNames));
-          
+
           logInfo('🏨 Total documents in rooms collection:', snapshot.docs.length);
           logInfo('🏨 Unique room types:', uniqueRoomNames.length);
           logInfo('🏨 Room types:', uniqueRoomNames);
-          
+
           setRoomTypes(uniqueRoomNames);
           setTotalRooms(uniqueRoomNames.length);
-          
+
           // Also store full room data
           const roomsData: Room[] = [];
           snapshot.forEach((doc) => {
@@ -214,8 +214,9 @@ export default function AdminDashboard() {
   today.setHours(0, 0, 0, 0);
   const todayTime = today.getTime();
 
-  // Get room types that have active bookings today (checkIn <= today && checkOut >= today)
-  const occupiedRoomTypes = new Set<string>();
+  // Get rooms that have active bookings today (checkIn <= today && checkOut > today)
+  // A room is occupied only if someone is currently checked in (not pending future bookings)
+  const occupiedRooms = new Set<string>();
   bookings.forEach(b => {
     if (b.status === 'confirmed' && b.room && b.checkIn && b.checkOut) {
       const checkIn = new Date(b.checkIn);
@@ -224,19 +225,20 @@ export default function AdminDashboard() {
       checkOut.setHours(0, 0, 0, 0);
       const checkInTime = checkIn.getTime();
       const checkOutTime = checkOut.getTime();
-      
-      // Room is occupied if today falls within booking period (checkout day is exclusive - matches BookingModal logic)
-      // Checkout day is available for new bookings
+
+      // Room is occupied if today falls within booking period (checkout day is exclusive)
+      // checkInTime <= todayTime AND checkOutTime > todayTime means someone is checked in today
       if (checkInTime <= todayTime && checkOutTime > todayTime) {
-        occupiedRoomTypes.add(b.room);
+        occupiedRooms.add(b.room);
       }
     }
   });
 
   // Available rooms = total room types - occupied - under maintenance
-  const availableRooms = totalRooms - occupiedRoomTypes.size - underMaintenance;
-  // Occupancy rate = (occupied room types / total room types) * 100
-  const occupancyRate = totalRooms > 0 ? Math.round((occupiedRoomTypes.size / totalRooms) * 100) : 0;
+  const occupiedCount = occupiedRooms.size;
+  const availableRooms = totalRooms - occupiedCount - underMaintenance;
+  // Occupancy rate = (occupied rooms / total rooms) * 100
+  const occupancyRate = totalRooms > 0 ? Math.round((occupiedCount / totalRooms) * 100) : 0;
 
   // Get recent activity (last 10 items from bookings and maintenance)
   const recentActivity = [
@@ -319,7 +321,7 @@ export default function AdminDashboard() {
             {/* Occupied Rooms */}
             <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Occupied</p>
-              <p className="text-3xl font-semibold text-gray-900 dark:text-white">{confirmedCount}</p>
+              <p className="text-3xl font-semibold text-gray-900 dark:text-white">{occupiedCount}</p>
               <div className="mt-3 flex items-center gap-2">
                 <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                   <div className="bg-green-500 h-2 rounded-full" style={{ width: `${occupancyRate}%` }}></div>

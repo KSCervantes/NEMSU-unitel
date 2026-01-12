@@ -19,7 +19,7 @@ export const generateBookingConfirmationEmail = (
     .container { max-width: 600px; margin: 0 auto; padding: 20px; }
     .header { background: linear-gradient(135deg, #112240 0%, #1e3a8a 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
     .logo { margin-bottom: 20px; }
-    .logo img { max-width: 80px; height: auto; }
+    .logo img { max-width: 50px; height: 50px; width: 50px; border-radius: 50%; object-fit: cover; }
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
     .booking-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
@@ -34,7 +34,7 @@ export const generateBookingConfirmationEmail = (
   <div class="container">
     <div class="header">
       <div class="logo">
-        <img src="${NEMSU_LOGO}" alt="NEMSU Logo" />
+        <img src="${NEMSU_LOGO}" alt="NEMSU Logo" width="50" height="50" />
       </div>
       <h1 style="margin: 0;">NEMSU Hotel</h1>
       <h2 style="margin: 10px 0 0 0; font-weight: normal;">Booking Received</h2>
@@ -108,7 +108,7 @@ export const generateBookingApprovedEmail = (
     .container { max-width: 600px; margin: 0 auto; padding: 20px; }
     .header { background: linear-gradient(135deg, #059669 0%, #10b981 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
     .logo { margin-bottom: 20px; }
-    .logo img { max-width: 80px; height: auto; }
+    .logo img { max-width: 50px; height: 50px; width: 50px; border-radius: 50%; object-fit: cover; }
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
     .booking-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
@@ -124,7 +124,7 @@ export const generateBookingApprovedEmail = (
   <div class="container">
     <div class="header">
       <div class="logo">
-        <img src="${NEMSU_LOGO}" alt="NEMSU Logo" />
+        <img src="${NEMSU_LOGO}" alt="NEMSU Logo" width="50" height="50" />
       </div>
       <h1 style="margin: 0;">NEMSU Hotel</h1>
       <h2 style="margin: 10px 0 0 0; font-weight: normal;">Booking Confirmed!</h2>
@@ -206,8 +206,12 @@ export const generateBookingRejectedEmail = (
 <!DOCTYPE html>
 <html>
 <head>
-  <stlogo { margin-bottom: 20px; }
-    .logo img { max-width: 80px; height: auto; }
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .logo { margin-bottom: 20px; }
+    .logo img { max-width: 50px; height: 50px; width: 50px; border-radius: 50%; object-fit: cover; }
     .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
     .booking-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
@@ -223,12 +227,8 @@ export const generateBookingRejectedEmail = (
   <div class="container">
     <div class="header">
       <div class="logo">
-        <img src="${NEMSU_LOGO}" alt="NEMSU Logo" />
-      </div></head>
-<body>
-  <div class="container">
-    <div class="header">
-
+        <img src="${NEMSU_LOGO}" alt="NEMSU Logo" width="50" height="50" />
+      </div>
       <h1 style="margin: 0;">NEMSU Hotel</h1>
       <h2 style="margin: 10px 0 0 0; font-weight: normal;">Booking Update</h2>
     </div>

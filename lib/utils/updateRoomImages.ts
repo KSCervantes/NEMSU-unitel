@@ -54,13 +54,13 @@ export async function updateRoomImagesToStorageUrls(): Promise<void> {
         let updatedCount = 0;
         let skippedCount = 0;
 
-        snapshot.forEach(async (docSnapshot) => {
+        await Promise.all(snapshot.docs.map(async (docSnapshot) => {
             const data = docSnapshot.data();
             const roomName = data.name;
             const currentImage = data.image;
 
             // Check if image is a local path (starts with /img/)
-            if (currentImage && currentImage.startsWith('/img/')) {
+            if (currentImage && typeof currentImage === 'string' && currentImage.startsWith('/img/')) {
                 const roomNameLower = roomName?.toLowerCase();
                 const storageUrl = storageUrlMap.get(roomNameLower || '');
 
@@ -84,7 +84,7 @@ export async function updateRoomImagesToStorageUrls(): Promise<void> {
                 logInfo(`ℹ️ "${roomName}" already has Storage URL, skipping`);
                 skippedCount++;
             }
-        });
+        }));
 
         logInfo(`✅ Update complete: ${updatedCount} updated, ${skippedCount} skipped`);
     } catch (error) {
@@ -92,4 +92,3 @@ export async function updateRoomImagesToStorageUrls(): Promise<void> {
         throw error;
     }
 }
-

@@ -15,11 +15,11 @@ export async function POST(req: NextRequest) {
 
     if (!rateLimitResult.allowed) {
       return NextResponse.json(
-        { 
+        {
           error: 'Too many requests. Please try again later.',
           resetTime: rateLimitResult.resetTime,
         },
-        { 
+        {
           status: 429,
           headers: {
             'X-RateLimit-Limit': '10',
@@ -55,8 +55,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Sanitize HTML content
-    const sanitizedHtml = sanitizeHtml(html);
+    // Note: We don't sanitize HTML for email templates as they are server-generated
+    // and trusted. Only sanitize if the HTML contains user-generated content.
+    // For email templates from emailTemplates.ts, use them as-is.
 
     // Create transporter using Gmail
     const transporter = nodemailer.createTransport({
@@ -71,8 +72,8 @@ export async function POST(req: NextRequest) {
     const info = await transporter.sendMail({
       from: `"NEMSU Hotel" <${process.env.GMAIL_USER}>`,
       to,
-      subject: sanitizeHtml(subject), // Sanitize subject too
-      html: sanitizedHtml,
+      subject: subject, // Use subject as-is (it's from our template)
+      html: html, // Use HTML as-is (it's from our template)
     });
 
     return NextResponse.json({

@@ -17,8 +17,24 @@ export async function verifyAdminAuth(request: NextRequest): Promise<{
   error?: string;
 }> {
   try {
+    // Require server-side shared secret until proper Firebase Admin verification is added
+    const serverApiKey = process.env.ADMIN_API_KEY;
+    const clientApiKey = request.headers.get('x-admin-api-key');
+    if (!serverApiKey) {
+      return {
+        isValid: false,
+        error: 'Server auth not configured',
+      };
+    }
+    if (!clientApiKey || clientApiKey !== serverApiKey) {
+      return {
+        isValid: false,
+        error: 'Invalid admin API key',
+      };
+    }
+
     const authHeader = request.headers.get('authorization');
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return {
         isValid: false,
@@ -27,14 +43,14 @@ export async function verifyAdminAuth(request: NextRequest): Promise<{
     }
 
     const token = authHeader.substring(7);
-    
+
     // Verify Firebase ID token
     // Note: This requires Firebase Admin SDK on the server
     // For now, we'll validate sessionStorage on client-side
     // In production, implement proper server-side token verification
-    
+
     const email = request.headers.get('x-admin-email');
-    
+
     if (!email) {
       return {
         isValid: false,
@@ -76,7 +92,7 @@ export async function verifyAdminAuth(request: NextRequest): Promise<{
 export function withAuth(handler: (req: NextRequest, email: string) => Promise<NextResponse>) {
   return async (req: NextRequest) => {
     const authResult = await verifyAdminAuth(req);
-    
+
     if (!authResult.isValid) {
       return NextResponse.json(
         { error: authResult.error || 'Unauthorized' },
@@ -87,4 +103,3 @@ export function withAuth(handler: (req: NextRequest, email: string) => Promise<N
     return handler(req, authResult.email!);
   };
 }
-

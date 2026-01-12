@@ -9,6 +9,16 @@ import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { db } from '@/lib/firebase';
 import { collection, query, getDocs, where } from 'firebase/firestore';
+import Swal from 'sweetalert2';
+
+interface Room {
+  id: string;
+  number: string;
+  type: string;
+  rate: number;
+  capacity: number;
+  status: string;
+}
 
 interface Booking {
   id: string;
@@ -17,6 +27,18 @@ interface Booking {
   checkIn: string;
   checkOut: string;
   status: string;
+  email?: string;
+  phone?: string;
+  guests?: number;
+  totalAmount?: number;
+  createdAt?: any;
+  totalPrice?: number;
+  payment?: {
+    total?: number;
+    basePrice?: number;
+    extraFee?: number;
+    nights?: number;
+  };
 }
 
 interface MaintenanceTask {
@@ -34,11 +56,35 @@ export default function Calendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [allBookings, setAllBookings] = useState<Booking[]>([]);
+  const [allRooms, setAllRooms] = useState<Room[]>([]);
   const [bookingsByDay, setBookingsByDay] = useState<{ [key: string]: Booking[] }>({});
   const [checkoutsByDay, setCheckoutsByDay] = useState<{ [key: string]: Booking[] }>({});
   const [upcomingBookings, setUpcomingBookings] = useState<{ date: string; count: number; rooms: string[] }[]>([]);
   const [maintenanceTasks, setMaintenanceTasks] = useState<MaintenanceTask[]>([]);
   const [maintenanceByDay, setMaintenanceByDay] = useState<{ [key: string]: MaintenanceTask[] }>({});
+
+  // New state for enhancements
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'checkin' | 'checkout' | 'maintenance'>('all');
+  const [viewMode, setViewMode] = useState<'calendar' | 'week' | 'room-grid'>('calendar');
+  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [selectedMaintenance, setSelectedMaintenance] = useState<MaintenanceTask | null>(null);
+  const [showMaintenance, setShowMaintenance] = useState(true);
+  const [hoveredDate, setHoveredDate] = useState<string | null>(null);
+
+  // New state for notifications and alerts
+  const [notifications, setNotifications] = useState<{
+    type: 'checkin' | 'checkout' | 'maintenance' | 'overdue';
+    message: string;
+    date: Date;
+    booking?: Booking;
+    maintenance?: MaintenanceTask;
+  }[]>([]);
+  const [showNotifications, setShowNotifications] = useState(true);
+
+  // New state for drag and drop
+  const [draggedBooking, setDraggedBooking] = useState<Booking | null>(null);
+  const [draggedRoom, setDraggedRoom] = useState<string | null>(null);
 
   useEffect(() => {
     if (isAuthenticated && !isLoading) {
@@ -48,6 +94,19 @@ export default function Calendar() {
 
   const fetchBookings = async () => {
     try {
+      // Fetch rooms
+      const roomsRef = collection(db, 'rooms');
+      const roomsSnapshot = await getDocs(roomsRef);
+      const roomsData: Room[] = [];
+      roomsSnapshot.forEach((doc) => {
+        roomsData.push({
+          id: doc.id,
+          ...doc.data()
+        } as Room);
+      });
+      setAllRooms(roomsData);
+
+      // Fetch bookings
       const bookingsRef = collection(db, 'bookings');
       const snapshot = await getDocs(bookingsRef);
 
@@ -76,6 +135,7 @@ export default function Calendar() {
 
       setMaintenanceTasks(maintenanceData);
       processMaintenanceByMonth(maintenanceData, currentDate);
+      generateNotifications(bookingsData, maintenanceData);
     } catch (error) {
       console.error('Error fetching bookings:', error);
     }
@@ -151,6 +211,67 @@ export default function Calendar() {
     setMaintenanceByDay(dayTasks);
   };
 
+  const generateNotifications = (bookings: Booking[], maintenance: MaintenanceTask[]) => {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const nextWeek = new Date(now);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+
+    const newNotifications: typeof notifications = [];
+
+    // Check-in notifications
+    bookings.filter(b => b.status === 'confirmed').forEach(booking => {
+      const checkInDate = new Date(booking.checkIn);
+      const checkOutDate = new Date(booking.checkOut);
+
+      if (checkInDate >= now && checkInDate <= nextWeek) {
+        if (checkInDate.toDateString() === now.toDateString()) {
+          newNotifications.push({
+            type: 'checkin',
+            message: `${booking.name} checking in today - Room ${booking.room}`,
+            date: checkInDate,
+            booking
+          });
+        } else if (checkInDate.toDateString() === tomorrow.toDateString()) {
+          newNotifications.push({
+            type: 'checkin',
+            message: `${booking.name} checking in tomorrow - Room ${booking.room}`,
+            date: checkInDate,
+            booking
+          });
+        }
+      }
+
+      // Overdue checkouts
+      if (checkOutDate < now && booking.status === 'confirmed') {
+        newNotifications.push({
+          type: 'overdue',
+          message: `Overdue checkout: ${booking.name} - Room ${booking.room}`,
+          date: checkOutDate,
+          booking
+        });
+      }
+    });
+
+    // Maintenance notifications
+    maintenance.filter(t => t.status !== 'completed').forEach(task => {
+      const dueDate = new Date(task.dueDate);
+      if (dueDate >= now && dueDate <= nextWeek) {
+        newNotifications.push({
+          type: 'maintenance',
+          message: `Maintenance due: ${task.title} - Room ${task.room}`,
+          date: dueDate,
+          maintenance: task
+        });
+      }
+    });
+
+    // Sort by date and limit to 10 most urgent
+    newNotifications.sort((a, b) => a.date.getTime() - b.date.getTime());
+    setNotifications(newNotifications.slice(0, 10));
+  };
+
   useEffect(() => {
     if (allBookings.length > 0) {
       processBookingsByMonth(allBookings, currentDate);
@@ -181,6 +302,165 @@ export default function Calendar() {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1));
   };
 
+  // Helper functions for enhancements
+  const getOccupancyStats = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const occupiedRooms = new Set<string>();
+    const maintenanceRooms = new Set<string>();
+
+    allBookings.forEach(booking => {
+      const checkIn = new Date(booking.checkIn).toISOString().split('T')[0];
+      const checkOut = new Date(booking.checkOut).toISOString().split('T')[0];
+      if (checkIn <= today && checkOut > today && booking.status === 'confirmed') {
+        occupiedRooms.add(booking.room);
+      }
+    });
+
+    maintenanceTasks.forEach(task => {
+      if (task.status !== 'completed') {
+        maintenanceRooms.add(task.room);
+      }
+    });
+
+    const totalRooms = allRooms.length || 1; // Use actual room count from database
+    const occupied = occupiedRooms.size;
+    const maintenance = maintenanceRooms.size;
+    const available = totalRooms - occupied - maintenance;
+    const occupancyPercentage = totalRooms > 0 ? Math.round((occupied / totalRooms) * 100) : 0;
+
+    return { occupied, available, maintenance, totalRooms, occupancyPercentage };
+  };
+
+  const getRevenueStats = () => {
+    // Filter by last 30 days (to match Revenue page's "This Month" filter)
+    const now = new Date();
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(now.getMonth() - 1);
+
+    const monthBookings = allBookings.filter(b => {
+      const createdDate = b.createdAt instanceof Date ? b.createdAt : (b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt));
+      return createdDate >= oneMonthAgo && (b.status === 'confirmed' || b.status === 'completed');
+    });
+
+    // Use actual totalAmount from booking (this is the most accurate)
+    let totalRevenue = 0;
+
+    monthBookings.forEach(booking => {
+      let bookingRevenue = 0;
+
+      // Priority order: payment.total -> totalPrice -> totalAmount
+      if (booking.payment && typeof booking.payment === 'object' && booking.payment.total !== undefined) {
+        bookingRevenue = parseFloat(booking.payment.total.toString()) || 0;
+      } else if (booking.totalPrice) {
+        bookingRevenue = parseFloat(booking.totalPrice.toString()) || 0;
+      } else if (booking.totalAmount && booking.totalAmount > 0) {
+        bookingRevenue = booking.totalAmount;
+      } else {
+        // Fallback: Calculate from room rate if no amount is available
+        const room = allRooms.find(r => r.number === booking.room);
+        if (room?.rate) {
+          const nights = Math.ceil((new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) / (1000 * 60 * 60 * 24));
+          bookingRevenue = nights * room.rate;
+        }
+      }
+
+      if (!isNaN(bookingRevenue) && bookingRevenue > 0) {
+        totalRevenue += bookingRevenue;
+      }
+    });
+
+    const stats = getOccupancyStats();
+    const avgOccupancy = stats.occupancyPercentage + '%';
+    const avgRevenuePerBooking = monthBookings.length > 0 ? totalRevenue / monthBookings.length : 0;
+
+    return { totalBookings: monthBookings.length, totalRevenue, avgOccupancy, avgRevenuePerBooking };
+  };
+
+  const getAlerts = (booking: Booking): string[] => {
+    const alerts: string[] = [];
+    const checkOut = new Date(booking.checkOut);
+    const now = new Date();
+
+    if (booking.status === 'confirmed') {
+      if (checkOut < now) alerts.push('Overdue checkout');
+      if (checkOut.getTime() - now.getTime() < 24 * 60 * 60 * 1000) alerts.push('Checkout within 24 hours');
+      if (new Date(booking.checkIn).toDateString() === now.toDateString()) alerts.push('Today check-in');
+    }
+
+    return alerts;
+  };
+
+  // Enhancement Functions
+  const getDailyRevenue = (day: number): number => {
+    const bookingsOnDay = bookingsByDay[day.toString()] || [];
+    return bookingsOnDay.reduce((sum, b) => sum + (b.payment?.total || b.totalPrice || 0), 0);
+  };
+
+  const getOccupancyPercentage = (day: number): number => {
+    const bookingsOnDay = bookingsByDay[day.toString()] || [];
+    const occupiedRooms = new Set(bookingsOnDay.map(b => b.room)).size;
+    return allRooms.length > 0 ? Math.round((occupiedRooms / allRooms.length) * 100) : 0;
+  };
+
+  const exportToCSV = () => {
+    const csvContent = [
+      ['Date', 'Guest Name', 'Room', 'Check-in', 'Check-out', 'Status', 'Guests', 'Total Revenue'],
+      ...allBookings.map(b => [
+        new Date(b.createdAt?.toDate ? b.createdAt.toDate() : b.createdAt).toLocaleDateString(),
+        b.name,
+        b.room,
+        new Date(b.checkIn).toLocaleDateString(),
+        new Date(b.checkOut).toLocaleDateString(),
+        b.status,
+        b.guests || 1,
+        b.payment?.total || b.totalPrice || 0
+      ])
+    ].map(row => row.join(',')).join('\n');
+
+    const element = document.createElement('a');
+    element.setAttribute('href', 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent));
+    element.setAttribute('download', `bookings-${new Date().toISOString().split('T')[0]}.csv`);
+    element.style.display = 'none';
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+
+    Swal.fire({
+      title: 'Success!',
+      text: 'Calendar exported to CSV',
+      icon: 'success',
+      toast: true,
+      position: 'top-end',
+      showConfirmButton: false,
+      timer: 3000
+    });
+  };
+
+  const exportToPDF = async () => {
+    Swal.fire({
+      title: 'Export Calendar',
+      html: '<p>PDF export will generate a printable calendar with all bookings.</p>',
+      icon: 'info',
+      confirmButtonText: 'Coming Soon'
+    });
+  };
+
+  const filteredBookings = allBookings.filter(booking => {
+    const matchesSearch = booking.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         booking.room.includes(searchQuery);
+    const matchesFilter = filterStatus === 'all' ||
+                         (filterStatus === 'checkin' && booking.status === 'confirmed') ||
+                         (filterStatus === 'checkout' && booking.status === 'confirmed');
+    return matchesSearch && matchesFilter;
+  });
+
+  const filteredMaintenance = maintenanceTasks.filter(task => {
+    const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         task.room.includes(searchQuery);
+    const matchesFilter = filterStatus === 'all' || filterStatus === 'maintenance';
+    return matchesSearch && matchesFilter;
+  });
+
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -199,20 +479,175 @@ export default function Calendar() {
 
       <AdminMainContent>
         <div className="mb-6">
-          <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
-            Calendar
-          </h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-1 text-sm">
-            View and manage booking schedule
-          </p>
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
+                Calendar
+              </h1>
+              <p className="text-gray-600 dark:text-gray-400 mt-1 text-sm">
+                View and manage booking schedule
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setViewMode('calendar')}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${viewMode === 'calendar' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}
+              >
+                📅 Calendar
+              </button>
+              <button
+                onClick={() => setViewMode('week')}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${viewMode === 'week' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}
+              >
+                📋 Week
+              </button>
+              <button
+                onClick={() => setViewMode('room-grid')}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${viewMode === 'room-grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}
+              >
+                🏠 Room Grid
+              </button>
+              <button
+                onClick={exportToCSV}
+                className="px-4 py-2 rounded-lg font-medium bg-green-500 hover:bg-green-600 text-white transition-colors"
+              >
+                📊 Export CSV
+              </button>
+              <button
+                onClick={exportToPDF}
+                className="px-4 py-2 rounded-lg font-medium bg-red-500 hover:bg-red-600 text-white transition-colors"
+              >
+                📄 Export PDF
+              </button>
+            </div>
+          </div>
+
+          {/* Occupancy Overview */}
+          <div className="grid grid-cols-4 gap-4 mb-6">
+            {(() => {
+              const stats = getOccupancyStats();
+              const revenue = getRevenueStats();
+              return (
+                <>
+                  <div className="bg-gradient-to-br from-blue-500 to-blue-600 dark:from-blue-600 dark:to-blue-700 rounded-lg p-4 text-white shadow-lg">
+                    <p className="text-sm font-medium opacity-90">Occupied</p>
+                    <p className="text-3xl font-bold">{stats.occupied}</p>
+                    <p className="text-xs opacity-75 mt-1">of {stats.totalRooms} rooms</p>
+                  </div>
+                  <div className="bg-gradient-to-br from-green-500 to-green-600 dark:from-green-600 dark:to-green-700 rounded-lg p-4 text-white shadow-lg">
+                    <p className="text-sm font-medium opacity-90">Available</p>
+                    <p className="text-3xl font-bold">{stats.available}</p>
+                    <p className="text-xs opacity-75 mt-1">ready to book</p>
+                  </div>
+                  <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 dark:from-yellow-600 dark:to-yellow-700 rounded-lg p-4 text-white shadow-lg">
+                    <p className="text-sm font-medium opacity-90">Maintenance</p>
+                    <p className="text-3xl font-bold">{stats.maintenance}</p>
+                    <p className="text-xs opacity-75 mt-1">in service</p>
+                  </div>
+                  <div className="bg-gradient-to-br from-purple-500 to-purple-600 dark:from-purple-600 dark:to-purple-700 rounded-lg p-4 text-white shadow-lg">
+                    <p className="text-sm font-medium opacity-90">This Month Revenue</p>
+                    <p className="text-3xl font-bold">₱{revenue.totalRevenue.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p>
+                    <p className="text-xs opacity-75 mt-1">{revenue.totalBookings} bookings</p>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
+          {/* Notifications Panel */}
+          {showNotifications && notifications.length > 0 && (
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 mb-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                  <span className="text-xl">🔔</span>
+                  Upcoming Events ({notifications.length})
+                </h3>
+                <button
+                  onClick={() => setShowNotifications(false)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {notifications.map((notification, index) => (
+                  <div
+                    key={index}
+                    className={`p-3 rounded-lg border-l-4 ${
+                      notification.type === 'checkin' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' :
+                      notification.type === 'checkout' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20' :
+                      notification.type === 'maintenance' ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20' :
+                      'border-red-500 bg-red-50 dark:bg-red-900/20'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">
+                          {notification.message}
+                        </p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                          {notification.date.toLocaleDateString()} at {notification.date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </p>
+                      </div>
+                      <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                        notification.type === 'checkin' ? 'bg-blue-200 dark:bg-blue-900 text-blue-800 dark:text-blue-300' :
+                        notification.type === 'checkout' ? 'bg-orange-200 dark:bg-orange-900 text-orange-800 dark:text-orange-300' :
+                        notification.type === 'maintenance' ? 'bg-yellow-200 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-300' :
+                        'bg-red-200 dark:bg-red-900 text-red-800 dark:text-red-300'
+                      }`}>
+                        {notification.type.charAt(0).toUpperCase() + notification.type.slice(1)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Search and Filter */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 mb-6">
+            <div className="flex gap-4 flex-wrap">
+              <div className="flex-1 min-w-[250px]">
+                <input
+                  type="text"
+                  placeholder="Search by guest name, room, or email..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                />
+              </div>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value as any)}
+                className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+              >
+                <option value="all">All Events</option>
+                <option value="checkin">Check-ins Only</option>
+                <option value="checkout">Checkouts Only</option>
+                <option value="maintenance">Maintenance Only</option>
+              </select>
+              <button
+                onClick={() => setShowMaintenance(!showMaintenance)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  showMaintenance
+                    ? 'bg-yellow-500 text-white'
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
+                }`}
+              >
+                {showMaintenance ? '✓ Maintenance Visible' : '✗ Maintenance Hidden'}
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4">
-          {/* Calendar */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+        {/* Conditional rendering for calendar vs week vs room grid */}
+        {viewMode === 'calendar' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Calendar - Left Side */}
+          <div className="lg:col-span-1 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
                 {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
               </h2>
               </div>
@@ -236,15 +671,15 @@ export default function Calendar() {
               </div>
             </div>
 
-            <div className="grid grid-cols-7 gap-2 mb-2">
+            <div className="grid grid-cols-7 gap-1 mb-3">
               {dayNames.map((day) => (
-                <div key={day} className="text-center font-semibold text-gray-700 dark:text-gray-300 py-2 bg-gray-100 dark:bg-gray-700 rounded">
+                <div key={day} className="text-center font-semibold text-xs text-gray-700 dark:text-gray-300 py-2">
                   {day}
                 </div>
               ))}
 
               {Array.from({ length: startingDayOfWeek }).map((_, index) => (
-                <div key={`empty-${index}`} className="p-4"></div>
+                <div key={`empty-${index}`} className="p-1"></div>
               ))}
 
               {Array.from({ length: daysInMonth }).map((_, index) => {
@@ -260,83 +695,274 @@ export default function Calendar() {
                   <div
                     key={day}
                     onClick={() => setSelectedDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), day))}
-                    className={`p-2 text-center cursor-pointer rounded transition-colors ${
-                          isToday 
-                            ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-semibold' 
-                            : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+                    onMouseEnter={() => setHoveredDate(day.toString())}
+                    onMouseLeave={() => setHoveredDate(null)}
+                    className={`p-2 text-center cursor-pointer rounded transition-all text-xs min-h-[80px] flex flex-col justify-between border ${
+                          isToday
+                            ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-semibold'
+                            : selectedDate && selectedDate.getDate() === day && selectedDate.getMonth() === currentDate.getMonth() && selectedDate.getFullYear() === currentDate.getFullYear()
+                            ? 'ring-2 ring-indigo-500 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-semibold'
+                            : 'hover:bg-gray-50 dark:hover:bg-gray-700 border-gray-200 dark:border-gray-700'
                         }`}
                   >
-                    <div className={`text-sm font-medium mb-1 ${isToday ? 'text-blue-700 dark:text-blue-300' : 'text-gray-800 dark:text-gray-200'}`}>{day}</div>
-                    <div className="flex flex-col gap-1">
-                      {!hasBookings && !hasCheckouts && !hasMaintenance && (
-                        <div className="text-xs px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-medium">
-                          Available
+                    <div className="flex justify-between items-start">
+                      <div className={`text-xs font-bold ${isToday ? 'text-blue-700 dark:text-blue-300' : selectedDate && selectedDate.getDate() === day ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-800 dark:text-gray-200'}`}>
+                        {day}
+                      </div>
+                      {getDailyRevenue(day) > 0 && (
+                        <div className="text-xs font-semibold text-green-600 dark:text-green-400">
+                          ₱{(getDailyRevenue(day) / 1000).toFixed(0)}K
                         </div>
                       )}
-                      {hasBookings && hasBookings.map((booking, idx) => (
-                        <div key={`checkin-${booking.id}-${idx}`} className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400 font-medium">
-                          <div>RESERVED</div>
-                          <div className="truncate">{booking.name}</div>
-                        </div>
-                      ))}
-                      {hasCheckouts && hasCheckouts.map((booking, idx) => (
-                        <div key={`checkout-${booking.id}-${idx}`} className="text-xs px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-400 font-medium">
-                          <div>CHECKOUT</div>
-                          <div className="truncate">{booking.name}</div>
-                        </div>
-                      ))}
-                      {hasMaintenance && hasMaintenance.map((task, idx) => (
-                        <div key={`maintenance-${task.id}-${idx}`} className="text-xs px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 font-medium">
-                          <div>MAINTENANCE</div>
-                          <div className="truncate">{task.room}</div>
-                        </div>
-                      ))}
                     </div>
+                    <div className="flex justify-center gap-1">
+                      {hasBookings && hasBookings.length > 0 && <div className="w-2 h-2 bg-blue-500 rounded-full"></div>}
+                      {hasCheckouts && hasCheckouts.length > 0 && <div className="w-2 h-2 bg-orange-500 rounded-full"></div>}
+                      {hasMaintenance && hasMaintenance.length > 0 && showMaintenance && <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>}
+                    </div>
+                    {hoveredDate === day.toString() && (
+                      <div className="text-xs font-medium opacity-75 mt-1">
+                        {getOccupancyPercentage(day)}% full
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
 
-            <div className="mt-4 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 flex-wrap bg-gray-100 dark:bg-gray-700 p-3 rounded-lg">
-              <div className="flex items-center gap-2 px-2 py-1 bg-white dark:bg-gray-600 rounded">
-                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                <span className="font-medium">Today</span>
+            <div className="mt-4 space-y-2 text-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                <span>Check-ins</span>
               </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-600 rounded-lg shadow-sm">
-                <div className="w-4 h-4 bg-gradient-to-br from-blue-100 to-indigo-100 border border-blue-300 rounded"></div>
-                <svg className="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 512 512">
-                  <path d="M138.418,273.859h-15.741v-9.774h7.132c4.466,0,8.084-3.62,8.084-8.084s-3.619-8.084-8.084-8.084h-7.132v-9.775h15.741 v-0.001c4.466,0,8.084-3.62,8.084-8.084c0-4.465-3.619-8.084-8.084-8.084h-23.825c-4.466,0-8.084,3.62-8.084,8.084v51.888 c0,4.465,3.619,8.084,8.084,8.084h23.825c4.466,0,8.084-3.62,8.084-8.084S142.884,273.859,138.418,273.859z"/>
-                  <path d="M175.806,247.916c-2.695,0-4.887-2.192-4.887-4.888c0-2.696,2.192-4.888,4.887-4.888h12.972 c4.466,0,8.084-3.62,8.084-8.084c0-4.465-3.618-8.084-8.084-8.084h-12.972c-11.61,0-21.056,9.446-21.056,21.057 c0,11.611,9.446,21.057,21.056,21.057c2.696,0,4.888,2.192,4.888,4.887c0,2.695-2.192,4.888-4.888,4.888h-12.971 c-4.466,0-8.084,3.62-8.084,8.084s3.619,8.084,8.084,8.084h12.971c11.61,0,21.057-9.446,21.057-21.057 C196.863,257.361,187.416,247.916,175.806,247.916z"/>
-                  <path d="M239.72,273.859h-15.74v-9.774h7.132c4.466,0,8.084-3.62,8.084-8.084s-3.619-8.084-8.084-8.084h-7.132v-9.775h15.74 v-0.001c4.466,0,8.084-3.62,8.084-8.084c0-4.465-3.618-8.084-8.084-8.084h-23.825c-4.466,0-8.084,3.62-8.084,8.084v51.888 c0,4.465,3.618,8.084,8.084,8.084h23.825c4.466,0,8.084-3.62,8.084-8.084S244.186,273.859,239.72,273.859z"/>
-                  <path d="M401.343,273.859h-15.74v-9.774h7.133c4.466,0,8.084-3.62,8.084-8.084s-3.618-8.084-8.084-8.084h-7.133v-9.775h15.74 v-0.001c4.466,0,8.084-3.62,8.084-8.084c0-4.465-3.618-8.084-8.084-8.084h-23.825c-4.466,0-8.084,3.62-8.084,8.084v51.888 c0,4.465,3.618,8.084,8.084,8.084h23.825c4.466,0,8.084-3.62,8.084-8.084S405.809,273.859,401.343,273.859z"/>
-                  <path d="M81.35,263.232c6.355-3.934,10.611-10.949,10.611-18.957c0-12.299-10.005-22.304-22.303-22.304H53.443 c-4.466,0-8.084,3.62-8.084,8.084v51.888c0,4.465,3.618,8.084,8.084,8.084c4.466,0,8.084-3.62,8.084-8.084v-15.364h3.281 l10.23,19.172c1.455,2.727,4.25,4.279,7.14,4.279c1.283,0,2.586-0.307,3.798-0.954c3.939-2.102,5.428-7,3.326-10.938 L81.35,263.232z M69.658,250.41h-8.131v-12.271h8.131c3.384,0,6.134,2.752,6.134,6.135C75.792,247.658,73.04,250.41,69.658,250.41 z"/>
-                  <path d="M294.744,263.232c6.354-3.934,10.611-10.949,10.611-18.957c0-12.299-10.005-22.304-22.303-22.304h-16.215 c-4.466,0-8.084,3.62-8.084,8.084v51.888c0,4.465,3.619,8.084,8.084,8.084c4.466,0,8.084-3.62,8.084-8.084v-15.364h3.281 l10.23,19.172c1.456,2.727,4.25,4.279,7.14,4.279c1.283,0,2.586-0.307,3.799-0.954c3.939-2.102,5.428-7,3.326-10.938 L294.744,263.232z M283.051,250.41h-8.131v-12.271h8.131c3.384,0,6.134,2.752,6.134,6.135 C289.186,247.658,286.435,250.41,283.051,250.41z"/>
-                  <path d="M359.094,222.493c-4.174-1.577-8.84,0.528-10.42,4.705l-12.049,31.88l-12.05-31.88c-1.579-4.176-6.243-6.282-10.42-4.704 c-4.177,1.578-6.283,6.243-4.704,10.42l19.611,51.888c1.189,3.144,4.2,5.226,7.563,5.226s6.374-2.081,7.563-5.227l19.61-51.888 C365.377,228.736,363.271,224.071,359.094,222.493z"/>
-                  <path d="M434.733,221.97h-6.435v0.001c-4.466,0-8.084,3.62-8.084,8.084v51.888c0,4.465,3.618,8.084,8.084,8.084h6.435 c17.594,0,31.909-14.314,31.909-31.909v-4.239C466.642,236.284,452.329,221.97,434.733,221.97z M450.473,258.119 c0,8.122-6.183,14.828-14.09,15.654v-35.548c7.907,0.827,14.09,7.532,14.09,15.654V258.119z"/>
-                  <path d="M500.465,199.728l-2.414-29.541c-0.342-4.196-3.847-7.426-8.057-7.426H22.005c-4.209,0-7.714,3.23-8.057,7.426 L0.027,340.495c-0.184,2.251,0.581,4.477,2.113,6.136c1.531,1.661,3.685,2.606,5.945,2.606h48.509c4.466,0,8.084-3.62,8.084-8.084 s-3.62-8.084-8.084-8.084H16.855L29.455,178.93h453.089l1.809,22.115c0.364,4.45,4.253,7.769,8.716,7.399 C497.517,208.081,500.83,204.178,500.465,199.728z"/>
-                  <path d="M511.973,340.494l-9.575-117.122c-0.363-4.45-4.267-7.761-8.716-7.399c-4.45,0.363-7.762,4.266-7.398,8.716l8.86,108.38 H83.54c-4.466,0-8.084,3.62-8.084,8.084s3.618,8.084,8.084,8.084h420.377c2.259,0,4.414-0.944,5.945-2.605 C511.392,344.972,512.157,342.746,511.973,340.494z"/>
-                </svg>
-                <span className="font-semibold">Check-ins</span>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                <span>Checkouts</span>
               </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-600 rounded-lg shadow-sm">
-                <div className="w-4 h-4 bg-gradient-to-br from-orange-100 to-amber-100 border border-orange-300 rounded"></div>
-                <svg className="w-4 h-4 text-orange-600" fill="currentColor" viewBox="0 0 16 16">
-                  <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
-                  <path d="M4.5 3a2.5 2.5 0 0 0-2.5 2.5v8A2.5 2.5 0 0 0 4.5 16h7a2.5 2.5 0 0 0 2.5-2.5v-8A2.5 2.5 0 0 0 11.5 3h-7zM3 5.5A1.5 1.5 0 0 1 4.5 4h7A1.5 1.5 0 0 1 13 5.5v8a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13.5v-8z"/>
-                  <path d="M4.5 2A.5.5 0 0 1 5 1.5h6a.5.5 0 0 1 0 1h-6A.5.5 0 0 1 4.5 2z"/>
-                </svg>
-                <span className="font-semibold">Checkouts</span>
-              </div>
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-600 rounded-lg shadow-sm">
-                <div className="w-4 h-4 bg-gradient-to-br from-yellow-100 to-amber-100 border border-yellow-300 rounded"></div>
-                <svg className="w-4 h-4 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-                </svg>
-                <span className="font-semibold">Maintenance</span>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                <span>Maintenance</span>
               </div>
             </div>
           </div>
+
+          {/* Details Panel - Right Side */}
+          <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+            {selectedDate ? (
+              <>
+                <div className="mb-6">
+                  <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
+                    {monthNames[selectedDate.getMonth()]} {selectedDate.getDate()}, {selectedDate.getFullYear()}
+                  </h2>
+                  <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
+                    {dayNames[selectedDate.getDay()]}
+                  </p>
+                </div>
+
+                <div className="space-y-6">
+                  {/* Check-ins Section */}
+                  {bookingsByDay[selectedDate.getDate().toString()] && bookingsByDay[selectedDate.getDate().toString()].length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold text-blue-700 dark:text-blue-400 mb-3 flex items-center gap-2">
+                        <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                        Check-ins ({bookingsByDay[selectedDate.getDate().toString()].length})
+                      </h3>
+                      <div className="space-y-2">
+                        {bookingsByDay[selectedDate.getDate().toString()].map((booking) => {
+                          const alerts = getAlerts(booking);
+                          return (
+                            <div key={booking.id} className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                              <div className="flex justify-between items-start mb-3">
+                                <div>
+                                  <p className="font-semibold text-gray-900 dark:text-white">{booking.name}</p>
+                                  <p className="text-sm text-gray-600 dark:text-gray-400">Room {booking.room} • {booking.guests} {booking.guests === 1 ? 'guest' : 'guests'}</p>
+                                </div>
+                                <span className="px-3 py-1 bg-blue-200 dark:bg-blue-900 text-blue-800 dark:text-blue-300 text-xs font-semibold rounded-full">Check-in</span>
+                              </div>
+
+                              {/* Alerts */}
+                              {alerts.length > 0 && (
+                                <div className="mb-3 space-y-1">
+                                  {alerts.map((alert, idx) => (
+                                    <p key={idx} className="text-xs font-semibold text-red-600 dark:text-red-400">⚠️ {alert}</p>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Contact Info */}
+                              <div className="bg-white dark:bg-gray-700/50 rounded p-3 mb-3 space-y-1 text-sm">
+                                {booking.email && (
+                                  <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                                    <span>📧</span>
+                                    <a href={`mailto:${booking.email}`} className="text-blue-600 dark:text-blue-400 hover:underline truncate">{booking.email}</a>
+                                  </div>
+                                )}
+                                {booking.phone && (
+                                  <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                                    <span>📞</span>
+                                    <a href={`tel:${booking.phone}`} className="text-blue-600 dark:text-blue-400 hover:underline">{booking.phone}</a>
+                                  </div>
+                                )}
+                              </div>
+
+                              <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+                                Checkout: {new Date(booking.checkOut).toLocaleDateString()}
+                              </p>
+
+                              {/* Quick Action Buttons */}
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => setSelectedBooking(booking)}
+                                  className="flex-1 px-3 py-2 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold rounded transition-colors"
+                                >
+                                  ✓ Check In
+                                </button>
+                                <button
+                                  className="flex-1 px-3 py-2 bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold rounded transition-colors"
+                                >
+                                  📝 Add Note
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Checkouts Section */}
+                  {checkoutsByDay[selectedDate.getDate().toString()] && checkoutsByDay[selectedDate.getDate().toString()].length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold text-orange-700 dark:text-orange-400 mb-3 flex items-center gap-2">
+                        <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
+                        Checkouts ({checkoutsByDay[selectedDate.getDate().toString()].length})
+                      </h3>
+                      <div className="space-y-2">
+                        {checkoutsByDay[selectedDate.getDate().toString()].map((booking) => (
+                          <div key={booking.id} className="bg-orange-50 dark:bg-orange-900/20 p-4 rounded-lg border border-orange-200 dark:border-orange-800">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <p className="font-semibold text-gray-900 dark:text-white">{booking.name}</p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">Room {booking.room} • {booking.guests} {booking.guests === 1 ? 'guest' : 'guests'}</p>
+                              </div>
+                              <span className="px-3 py-1 bg-orange-200 dark:bg-orange-900 text-orange-800 dark:text-orange-300 text-xs font-semibold rounded-full">Checkout</span>
+                            </div>
+
+                            {/* Contact Info */}
+                            <div className="bg-white dark:bg-gray-700/50 rounded p-3 mb-3 space-y-1 text-sm">
+                              {booking.email && (
+                                <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                                  <span>📧</span>
+                                  <a href={`mailto:${booking.email}`} className="text-blue-600 dark:text-blue-400 hover:underline truncate">{booking.email}</a>
+                                </div>
+                              )}
+                              {booking.phone && (
+                                <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                                  <span>📞</span>
+                                  <a href={`tel:${booking.phone}`} className="text-blue-600 dark:text-blue-400 hover:underline">{booking.phone}</a>
+                                </div>
+                              )}
+                            </div>
+
+                            <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+                              Check-in: {new Date(booking.checkIn).toLocaleDateString()}
+                            </p>
+
+                            {/* Quick Action Buttons */}
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => setSelectedBooking(booking)}
+                                className="flex-1 px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded transition-colors"
+                              >
+                                ✓ Check Out
+                              </button>
+                              <button
+                                className="flex-1 px-3 py-2 bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold rounded transition-colors"
+                              >
+                                📝 Add Note
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Maintenance Section */}
+                  {maintenanceByDay[selectedDate.getDate().toString()] && maintenanceByDay[selectedDate.getDate().toString()].length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold text-yellow-700 dark:text-yellow-400 mb-3 flex items-center gap-2">
+                        <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                        Maintenance ({maintenanceByDay[selectedDate.getDate().toString()].length})
+                      </h3>
+                      <div className="space-y-2">
+                        {maintenanceByDay[selectedDate.getDate().toString()].map((task) => (
+                          <div key={task.id} className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <p className="font-semibold text-gray-900 dark:text-white">{task.title}</p>
+                                <p className="text-sm text-gray-600 dark:text-gray-400">Room {task.room}</p>
+                              </div>
+                              <span className={`px-3 py-1 text-xs font-semibold rounded-full ${
+                                task.priority === 'high' ? 'bg-red-200 dark:bg-red-900 text-red-800 dark:text-red-300' :
+                                task.priority === 'medium' ? 'bg-yellow-200 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-300' :
+                                'bg-green-200 dark:bg-green-900 text-green-800 dark:text-green-300'
+                              }`}>
+                                {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+                              Due: {new Date(task.dueDate).toLocaleDateString()}
+                            </p>
+                            {/* Quick Action Buttons */}
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => setSelectedMaintenance(task)}
+                                className="flex-1 px-3 py-2 bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-semibold rounded transition-colors"
+                              >
+                                ✓ Complete
+                              </button>
+                              <button
+                                className="flex-1 px-3 py-2 bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold rounded transition-colors"
+                              >
+                                📝 Update
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {!bookingsByDay[selectedDate.getDate().toString()] &&
+                   !checkoutsByDay[selectedDate.getDate().toString()] &&
+                   !maintenanceByDay[selectedDate.getDate().toString()] && (
+                    <div className="text-center py-12">
+                      <svg className="w-16 h-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <p className="text-gray-600 dark:text-gray-400 font-medium">No bookings or maintenance scheduled</p>
+                      <p className="text-gray-500 dark:text-gray-500 text-sm mt-1">This day is completely free</p>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12">
+                <svg className="w-16 h-16 text-gray-300 dark:text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <p className="text-gray-600 dark:text-gray-400 font-medium">Select a date to view details</p>
+                <p className="text-gray-500 dark:text-gray-500 text-sm mt-1">Click on any date in the calendar to see bookings and maintenance</p>
+              </div>
+            )}
+          </div>
         </div>
+        ) : viewMode === 'week' ? (
+          <div>Week View Coming Soon</div>
+        ) : viewMode === 'room-grid' ? (
+          <div>Room Grid View Coming Soon</div>
+        ) : null}
       </AdminMainContent>
     </div>
   );

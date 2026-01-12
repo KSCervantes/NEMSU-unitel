@@ -9,7 +9,6 @@ import BookingModal from "./components/BookingModal";
 import { db, storage } from '@/lib/firebase';
 import { collection, query, where, getDocs, addDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref, getDownloadURL } from 'firebase/storage';
-import { updateRoomImagesToStorageUrls } from '@/lib/utils/updateRoomImages';
 
 interface Room {
   id?: string;
@@ -40,36 +39,15 @@ export default function Home() {
         // Admin should add rooms manually through the admin panel
         setRooms([]);
       } else {
-        // Check if any rooms have local image paths and update them
-        const needsUpdate = Array.from(snapshot.docs).some(doc => {
-          const data = doc.data();
-          return data.image && data.image.startsWith('/img/');
+        const roomsData: Room[] = [];
+        snapshot.forEach((doc) => {
+          roomsData.push({ id: doc.id, ...doc.data() } as Room);
         });
-
-        if (needsUpdate) {
-          console.log('🔄 Some rooms have local image paths, updating to Storage URLs...');
-          await updateRoomImagesToStorageUrls();
-          // Fetch again after update
-          const updatedSnapshot = await getDocs(roomsRef);
-          const roomsData: Room[] = [];
-          updatedSnapshot.forEach((doc) => {
-            roomsData.push({ id: doc.id, ...doc.data() } as Room);
-          });
-          const unique = Array.from(
-            new Map(roomsData.map((r) => [r.name, r])).values()
-          );
-          setRooms(unique);
-        } else {
-          const roomsData: Room[] = [];
-          snapshot.forEach((doc) => {
-            roomsData.push({ id: doc.id, ...doc.data() } as Room);
-          });
-          // Deduplicate by name
-          const unique = Array.from(
-            new Map(roomsData.map((r) => [r.name, r])).values()
-          );
-          setRooms(unique);
-        }
+        // Deduplicate by name
+        const unique = Array.from(
+          new Map(roomsData.map((r) => [r.name, r])).values()
+        );
+        setRooms(unique);
       }
     } catch (error) {
       console.error('Error fetching rooms:', error);

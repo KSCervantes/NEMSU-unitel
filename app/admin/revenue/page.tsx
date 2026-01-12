@@ -10,7 +10,7 @@ import AdminMainContent from '../components/AdminMainContent';
 import { db } from '@/lib/firebase';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 
-type FilterPeriod = 'all' | 'week' | 'month';
+type FilterPeriod = 'all' | 'week' | 'month' | 'year' | string;
 
 export default function Revenue() {
   const router = useRouter();
@@ -19,6 +19,7 @@ export default function Revenue() {
   const [confirmedBookings, setConfirmedBookings] = useState(0);
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
   const [allBookings, setAllBookings] = useState<any[]>([]);
+  const [availableYears, setAvailableYears] = useState<number[]>([]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -32,7 +33,8 @@ export default function Revenue() {
 
       snapshot.forEach((doc) => {
         const data = doc.data();
-        if (data.status === 'confirmed') {
+        // Include both confirmed and completed bookings in revenue calculation
+        if (data.status === 'confirmed' || data.status === 'completed') {
           bookings.push({
             id: doc.id,
             ...data,
@@ -42,6 +44,27 @@ export default function Revenue() {
       });
 
       setAllBookings(bookings);
+
+      // Calculate available years from bookings (include both createdAt and checkIn years)
+      const years = new Set<number>();
+      bookings.forEach(booking => {
+        // Add year from when booking was created
+        years.add(booking.createdAt.getFullYear());
+
+        // Also add year from check-in date if available
+        if (booking.checkIn) {
+          const checkInDate = new Date(booking.checkIn);
+          years.add(checkInDate.getFullYear());
+        }
+      });
+
+      // Always include current year and previous year
+      const currentYear = new Date().getFullYear();
+      years.add(currentYear);
+      years.add(currentYear - 1);
+
+      const sortedYears = Array.from(years).sort((a, b) => b - a);
+      setAvailableYears(sortedYears);
     });
 
     return () => unsubscribe();
@@ -64,7 +87,15 @@ export default function Revenue() {
       filteredBookings = allBookings.filter(booking =>
         booking.createdAt >= oneMonthAgo
       );
+    } else if (filterPeriod.toString().includes('year-')) {
+      // Filter by specific year (e.g., 'year-2025')
+      const yearStr = filterPeriod.toString().replace('year-', '');
+      const selectedYear = parseInt(yearStr);
+      filteredBookings = allBookings.filter(booking =>
+        booking.createdAt.getFullYear() === selectedYear
+      );
     }
+    // 'all' period uses all bookings (no filter)
 
     let revenue = 0;
     filteredBookings.forEach((booking) => {
@@ -213,6 +244,25 @@ export default function Revenue() {
               >
                 This Month
               </button>
+
+              {/* Year Filter Dropdown */}
+              {availableYears.length > 0 && (
+                <>
+                  <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1"></div>
+                  <select
+                    value={filterPeriod.toString().includes('year-') ? filterPeriod : ''}
+                    onChange={(e) => e.target.value && setFilterPeriod(e.target.value)}
+                    className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 cursor-pointer focus:ring-2 focus:ring-green-500"
+                  >
+                    <option value="">📅 Select Year</option>
+                    {availableYears.map((year) => (
+                      <option key={year} value={`year-${year}`}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
 
               {/* Export CSV Button */}
               <button

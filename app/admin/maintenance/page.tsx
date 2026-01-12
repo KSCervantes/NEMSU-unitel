@@ -21,15 +21,24 @@ interface MaintenanceTask {
   priority: 'low' | 'medium' | 'high';
   status: 'pending' | 'in-progress' | 'completed';
   assignedTo: string;
+  startDate: string;
   dueDate: string;
   description: string;
   createdAt?: any;
 }
 
+interface RoomData {
+  id: string;
+  name: string;
+  image?: string;
+  type?: string;
+  rate?: number;
+}
+
 export default function Maintenance() {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useProtectedAdminPage();
-  
+
   // Enable keyboard navigation
   useKeyboardNavigation();
   const [tasks, setTasks] = useState<MaintenanceTask[]>([]);
@@ -38,7 +47,7 @@ export default function Maintenance() {
   const [editingTask, setEditingTask] = useState<MaintenanceTask | null>(null);
 
   // Fetch rooms from Firestore
-  const [availableRooms, setAvailableRooms] = useState<string[]>([]);
+  const [availableRooms, setAvailableRooms] = useState<RoomData[]>([]);
 
   const [formData, setFormData] = useState({
     title: '',
@@ -46,6 +55,7 @@ export default function Maintenance() {
     priority: 'medium' as 'low' | 'medium' | 'high',
     status: 'pending' as 'pending' | 'in-progress' | 'completed',
     assignedTo: '',
+    startDate: '',
     dueDate: '',
     description: ''
   });
@@ -58,14 +68,20 @@ export default function Maintenance() {
       try {
         const roomsRef = collection(db, 'rooms');
         const snapshot = await getDocs(roomsRef);
-        const roomNames: string[] = [];
+        const roomData: RoomData[] = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
           if (data.name) {
-            roomNames.push(data.name);
+            roomData.push({
+              id: doc.id,
+              name: data.name,
+              image: data.image,
+              type: data.type,
+              rate: data.rate
+            });
           }
         });
-        setAvailableRooms(roomNames);
+        setAvailableRooms(roomData);
       } catch (error) {
         console.error('Error fetching rooms:', error);
         setAvailableRooms([]);
@@ -104,6 +120,7 @@ export default function Maintenance() {
         priority: task.priority,
         status: task.status,
         assignedTo: task.assignedTo,
+        startDate: task.startDate,
         dueDate: task.dueDate,
         description: task.description
       });
@@ -115,6 +132,7 @@ export default function Maintenance() {
         priority: 'medium',
         status: 'pending',
         assignedTo: '',
+        startDate: '',
         dueDate: '',
         description: ''
       });
@@ -131,6 +149,7 @@ export default function Maintenance() {
       priority: 'medium',
       status: 'pending',
       assignedTo: '',
+      startDate: '',
       dueDate: '',
       description: ''
     });
@@ -331,6 +350,14 @@ export default function Maintenance() {
                           </svg>
                           <span className="font-medium">{task.assignedTo}</span>
                         </div>
+                        {task.startDate && (
+                          <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded-lg">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            <span className="font-medium">Start: {new Date(task.startDate).toLocaleDateString()}</span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 rounded-lg">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -400,20 +427,52 @@ export default function Maintenance() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
-                    <span className="text-red-500">*</span> Room
+                  <label className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+                    <span className="text-red-500">*</span> Select Room
                   </label>
-                  <select
-                    required
-                    value={formData.room}
-                    onChange={(e) => setFormData({ ...formData, room: e.target.value })}
-                    className="w-full px-4 py-3 border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all cursor-pointer"
-                  >
-                    <option value="">🏨 Select Room</option>
-                    {availableRooms.map((room) => (
-                      <option key={room} value={room}>🚪 {room}</option>
-                    ))}
-                  </select>
+                  {availableRooms.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                      {availableRooms.map((room) => (
+                        <div
+                          key={room.id}
+                          onClick={() => setFormData({ ...formData, room: room.name })}
+                          className={`relative rounded-lg overflow-hidden cursor-pointer transition-all border-2 ${
+                            formData.room === room.name
+                              ? 'border-blue-500 ring-2 ring-blue-300 dark:ring-blue-600'
+                              : 'border-gray-300 dark:border-gray-600 hover:border-blue-400'
+                          }`}
+                        >
+                          {room.image ? (
+                            <img
+                              src={room.image}
+                              alt={room.name}
+                              className="w-full h-24 object-cover"
+                            />
+                          ) : (
+                            <div className="w-full h-24 bg-gradient-to-br from-gray-300 to-gray-400 dark:from-gray-600 dark:to-gray-700 flex items-center justify-center">
+                              <span className="text-gray-600 dark:text-gray-300 text-2xl">🚪</span>
+                            </div>
+                          )}
+                          <div className="p-2 bg-white dark:bg-gray-800">
+                            <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{room.name}</p>
+                            {room.type && (
+                              <p className="text-xs text-gray-500 dark:text-gray-400">{room.type}</p>
+                            )}
+                          </div>
+                          {formData.room === room.name && (
+                            <div className="absolute top-1 right-1 bg-blue-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">
+                              ✓
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">No rooms available</p>
+                  )}
+                  {!formData.room && (
+                    <p className="text-red-500 text-sm">Please select a room</p>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -464,17 +523,32 @@ export default function Maintenance() {
                   />
                 </div>
 
-                <div>
-                  <label className="flex text-sm font-bold text-gray-700 dark:text-gray-300 mb-2 items-center gap-2">
-                    <span className="text-red-500">*</span> Due Date
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={formData.dueDate}
-                    onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
-                    className="w-full px-4 py-3 border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className="flex text-sm font-bold text-gray-700 dark:text-gray-300 mb-2 items-center gap-2">
+                      <span className="text-red-500">*</span> Start Date
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={formData.startDate}
+                      onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                      className="w-full px-4 py-3 border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="flex text-sm font-bold text-gray-700 dark:text-gray-300 mb-2 items-center gap-2">
+                      <span className="text-red-500">*</span> Due Date
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={formData.dueDate}
+                      onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+                      className="w-full px-4 py-3 border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                    />
+                  </div>
                 </div>
 
                 <div>

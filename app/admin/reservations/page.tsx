@@ -9,7 +9,7 @@ import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addDoc, serverTimestamp, getDocs } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addDoc, serverTimestamp, getDocs, where } from 'firebase/firestore';
 import { sanitizeHtml, sanitizeText } from '@/lib/sanitize';
 import { logError } from '@/lib/logger';
 import { getEnhancedErrorMessage } from '@/lib/errorMessages';
@@ -18,6 +18,30 @@ import { useFocusTrap } from '@/app/hooks/useFocusTrap';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
 import { initCSRF, getCSRFToken } from '@/lib/csrf';
 import ModalWithFocusTrap from '@/app/components/ModalWithFocusTrap';
+import { DayPicker } from 'react-day-picker';
+import type { DateRange } from 'react-day-picker';
+import 'react-day-picker/dist/style.css';
+
+interface Region {
+  code: string;
+  name: string;
+  regionName: string;
+}
+
+interface Province {
+  code: string;
+  name: string;
+}
+
+interface City {
+  code: string;
+  name: string;
+}
+
+interface Barangay {
+  code: string;
+  name: string;
+}
 
 interface Booking {
   id: string;
@@ -56,10 +80,10 @@ interface Booking {
 export default function Reservations() {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useProtectedAdminPage();
-  
+
   // Enable keyboard navigation
   useKeyboardNavigation();
-  
+
   // Initialize CSRF token
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -67,6 +91,8 @@ export default function Reservations() {
     }
   }, []);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [bookedByRoom, setBookedByRoom] = useState<Record<string, { start: number; end: number; id: string }[]>>({});
+  const [maintenanceByRoom, setMaintenanceByRoom] = useState<Record<string, { start: number; end: number; id: string }[]>>({});
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -77,6 +103,13 @@ export default function Reservations() {
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [rooms, setRooms] = useState<{ id: string; name: string }[]>([]);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [conflictStatus, setConflictStatus] = useState<{ hasConflict: boolean; type: 'booking' | 'maintenance' | null; message: string }>({ hasConflict: false, type: null, message: '' });
+  const [range, setRange] = useState<DateRange | undefined>();
+  const [regions, setRegions] = useState<Region[]>([]);
+  const [provinces, setProvinces] = useState<Province[]>([]);
+  const [cities, setCities] = useState<City[]>([]);
+  const [barangays, setBarangays] = useState<Barangay[]>([]);
+  const [addressLoading, setAddressLoading] = useState(false);
   const [formData, setFormData] = useState<Partial<Booking>>({
     name: '',
     surname: '',
@@ -102,6 +135,94 @@ export default function Reservations() {
     message: ''
   });
 
+  // Fetch regions on modal open
+  useEffect(() => {
+    if (isModalOpen && formData.country === "Philippines") {
+      fetchRegions();
+    }
+  }, [isModalOpen, formData.country]);
+
+  const fetchRegions = async () => {
+    try {
+      setAddressLoading(true);
+      const response = await fetch("https://psgc.cloud/api/regions");
+      const data = await response.json();
+      setRegions(data);
+    } catch (error) {
+      logError("Error fetching regions:", error);
+    } finally {
+      setAddressLoading(false);
+    }
+  };
+
+  const fetchProvinces = async (regionCode: string) => {
+    try {
+      setAddressLoading(true);
+      const response = await fetch(`https://psgc.cloud/api/regions/${regionCode}/provinces`);
+      const data = await response.json();
+      setProvinces(data);
+      setCities([]);
+      setBarangays([]);
+    } catch (error) {
+      logError("Error fetching provinces:", error);
+    } finally {
+      setAddressLoading(false);
+    }
+  };
+
+  const fetchCities = async (provinceCode: string) => {
+    try {
+      setAddressLoading(true);
+      const response = await fetch(`https://psgc.cloud/api/provinces/${provinceCode}/cities-municipalities`);
+      const data = await response.json();
+      setCities(data);
+      setBarangays([]);
+    } catch (error) {
+      logError("Error fetching cities:", error);
+    } finally {
+      setAddressLoading(false);
+    }
+  };
+
+  const fetchBarangays = async (cityCode: string) => {
+    try {
+      setAddressLoading(true);
+      const response = await fetch(`https://psgc.cloud/api/cities-municipalities/${cityCode}/barangays`);
+      const data = await response.json();
+      setBarangays(data);
+    } catch (error) {
+      logError("Error fetching barangays:", error);
+    } finally {
+      setAddressLoading(false);
+    }
+  };
+
+  const handleAddressChange = (e: React.ChangeEvent<HTMLSelectElement | HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
+
+    // Handle cascading dropdowns
+    if (name === "region") {
+      const selectedRegion = regions.find(r => r.name === value);
+      if (selectedRegion) {
+        fetchProvinces(selectedRegion.code);
+        setFormData({ ...formData, region: value, province: '', city: '', barangay: '' });
+      }
+    } else if (name === "province") {
+      const selectedProvince = provinces.find(p => p.name === value);
+      if (selectedProvince) {
+        fetchCities(selectedProvince.code);
+        setFormData({ ...formData, province: value, city: '', barangay: '' });
+      }
+    } else if (name === "city") {
+      const selectedCity = cities.find(c => c.name === value);
+      if (selectedCity) {
+        fetchBarangays(selectedCity.code);
+        setFormData({ ...formData, city: value, barangay: '' });
+      }
+    }
+  };
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (expandedBooking && !(event.target as Element).closest('.relative')) {
@@ -119,17 +240,69 @@ export default function Reservations() {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const bookingsData: Booking[] = [];
-      snapshot.forEach((doc) => {
-        bookingsData.push({
-          id: doc.id,
-          ...doc.data()
-        } as Booking);
+      const rangeMap: Record<string, { start: number; end: number; id: string }[]> = {};
+
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as any;
+        const booking: Booking = {
+          id: docSnap.id,
+          ...data
+        } as Booking;
+        bookingsData.push(booking);
+
+        // Build booked ranges for conflict detection (skip cancelled)
+        if (booking.status !== 'cancelled' && booking.room && booking.checkIn && booking.checkOut) {
+          const start = new Date(booking.checkIn).setHours(0, 0, 0, 0);
+          const end = new Date(booking.checkOut).setHours(0, 0, 0, 0); // checkout is exclusive
+          if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+            if (!rangeMap[booking.room]) rangeMap[booking.room] = [];
+            rangeMap[booking.room].push({ start, end, id: booking.id });
+          }
+        }
       });
+
       setBookings(bookingsData);
+      setBookedByRoom(rangeMap);
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    // Maintenance listener for blocking dates
+    const maintenanceQuery = query(collection(db, 'maintenance'), where('status', 'in', ['pending', 'in-progress']));
+    const unsubscribeMaintenance = onSnapshot(maintenanceQuery, (snap) => {
+      const map: Record<string, { start: number; end: number; id: string }[]> = {};
+      snap.forEach((docSnap) => {
+        const d = docSnap.data() as any;
+        if (!d?.room) return;
+
+        let start: number;
+        let end: number;
+
+        if (d.startDate && d.dueDate) {
+          start = new Date(d.startDate).setHours(0, 0, 0, 0);
+          end = new Date(d.dueDate).setHours(23, 59, 59, 999);
+        } else if (d.start && d.end) {
+          start = new Date(d.start).getTime();
+          end = new Date(d.end).getTime();
+        } else if (d.dueDate) {
+          const dueDate = new Date(d.dueDate);
+          start = new Date(dueDate).setHours(0, 0, 0, 0);
+          end = new Date(dueDate).setHours(23, 59, 59, 999);
+        } else {
+          start = new Date().setHours(0, 0, 0, 0);
+          end = new Date().setHours(23, 59, 59, 999);
+        }
+
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+        if (!map[d.room]) map[d.room] = [];
+        map[d.room].push({ start, end, id: docSnap.id });
+      });
+      setMaintenanceByRoom(map);
+    });
+
+    return () => {
+      unsubscribe();
+      unsubscribeMaintenance();
+    };
   }, [isAuthenticated]);
 
   // Fetch available rooms
@@ -149,6 +322,103 @@ export default function Reservations() {
     };
     fetchRooms();
   }, []);
+
+  // Build disabled day intervals for the selected room
+  const disabledRanges = () => {
+    const r = bookedByRoom[formData.room || ''] || [];
+    const m = maintenanceByRoom[formData.room || ''] || [];
+    const toIntervals = (list: { start: number; end: number; id: string }[]) => list
+      .filter(iv => iv.id !== editingBooking?.id) // Exclude current booking when editing
+      .map((iv) => {
+        const from = new Date(iv.start);
+        from.setHours(0, 0, 0, 0);
+        const to = new Date(iv.end);
+        // make checkout day available again: disable until the day before checkout
+        const last = new Date(to);
+        last.setDate(last.getDate() - 1);
+        last.setHours(23, 59, 59, 999);
+        return { from, to: last };
+      });
+    return [...toIntervals(r), ...toIntervals(m)];
+  };
+
+  // Sync range with formData
+  useEffect(() => {
+    if (range?.from && range?.to) {
+      const checkIn = range.from.toISOString().split('T')[0];
+      const checkOut = range.to.toISOString().split('T')[0];
+      setFormData(prev => ({ ...prev, checkIn, checkOut }));
+    } else if (!range) {
+      setFormData(prev => ({ ...prev, checkIn: '', checkOut: '' }));
+    }
+  }, [range]);
+
+  // Sync formData with range when editing
+  useEffect(() => {
+    if (formData.checkIn && formData.checkOut) {
+      const from = new Date(formData.checkIn);
+      const to = new Date(formData.checkOut);
+      setRange({ from, to });
+    } else {
+      setRange(undefined);
+    }
+  }, [isModalOpen]);
+
+  // Real-time conflict detection for form
+  const checkFormConflicts = (room: string, checkInStr: string, checkOutStr: string) => {
+    if (!room || !checkInStr || !checkOutStr) {
+      setConflictStatus({ hasConflict: false, type: null, message: '' });
+      return;
+    }
+
+    const checkIn = new Date(checkInStr).setHours(0, 0, 0, 0);
+    const checkOut = new Date(checkOutStr).setHours(0, 0, 0, 0);
+
+    if (!Number.isFinite(checkIn) || !Number.isFinite(checkOut) || checkOut <= checkIn) {
+      setConflictStatus({ hasConflict: false, type: null, message: '' });
+      return;
+    }
+
+    // Check booking conflicts
+    const existing = bookedByRoom[room] || [];
+    const conflictingBooking = existing.find(r => r.id !== editingBooking?.id && checkIn < r.end && checkOut > r.start);
+    if (conflictingBooking) {
+      const conflictStart = new Date(conflictingBooking.start).toLocaleDateString();
+      const conflictEnd = new Date(conflictingBooking.end).toLocaleDateString();
+      setConflictStatus({
+        hasConflict: true,
+        type: 'booking',
+        message: `⚠️ Overlaps with existing booking (${conflictStart} - ${conflictEnd})`
+      });
+      return;
+    }
+
+    // Check maintenance conflicts
+    const maintenance = maintenanceByRoom[room] || [];
+    const conflictingMaintenance = maintenance.find(r => checkIn < r.end && checkOut > r.start);
+    if (conflictingMaintenance) {
+      const maintStart = new Date(conflictingMaintenance.start).toLocaleDateString();
+      const maintEnd = new Date(conflictingMaintenance.end).toLocaleDateString();
+      setConflictStatus({
+        hasConflict: true,
+        type: 'maintenance',
+        message: `🔧 Room is under maintenance (${maintStart} - ${maintEnd})`
+      });
+      return;
+    }
+
+    // No conflicts
+    setConflictStatus({
+      hasConflict: false,
+      type: null,
+      message: '✅ Dates are available for this room'
+    });
+  };
+
+  // Trigger conflict check whenever form data changes
+  useEffect(() => {
+    checkFormConflicts(formData.room || '', formData.checkIn || '', formData.checkOut || '');
+  }, [formData.room, formData.checkIn, formData.checkOut, editingBooking?.id]);
 
   const updateBookingStatus = async (bookingId: string, newStatus: 'pending' | 'confirmed' | 'cancelled' | 'completed') => {
     try {
@@ -386,10 +656,24 @@ export default function Reservations() {
               margin-top: 40px;
               font-size: 1rem;
             }
+            .logo-container {
+              text-align: center;
+              margin-bottom: 24px;
+              padding-bottom: 20px;
+              border-bottom: 2px solid #e5e7eb;
+            }
+            .logo-container img {
+              max-width: 120px;
+              height: auto;
+              display: inline-block;
+            }
           </style>
         </head>
         <body>
           <div class="container">
+            <div class="logo-container">
+              <img src="/img/NEMSU_LOGOO.webp" alt="NEMSU Logo" />
+            </div>
             <h1>UNITEL Hotel Reservation</h1>
             <div class="section">
               <div class="section-title">Guest Information</div>
@@ -406,20 +690,24 @@ export default function Reservations() {
                 <tr><td class="label">Room:</td><td class="value">${safeRoom}</td></tr>
                 <tr><td class="label">Check-in:</td><td class="value">${new Date(booking.checkIn).toLocaleDateString()}</td></tr>
                 <tr><td class="label">Check-out:</td><td class="value">${new Date(booking.checkOut).toLocaleDateString()}</td></tr>
+                <tr><td class="label">Number of Nights:</td><td class="value">${Math.ceil((new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) / (1000 * 60 * 60 * 24))} night(s)</td></tr>
                 <tr><td class="label">Guests:</td><td class="value">${sanitizeText(booking.guests)}</td></tr>
                 <tr><td class="label">Status:</td><td class="value">${sanitizeText(booking.status.toUpperCase())}</td></tr>
               </table>
             </div>
-            ${booking.payment ? `
             <div class="section">
               <div class="section-title">Payment Details</div>
               <div class="payment-summary">
+                ${booking.payment ? `
                 <div><span class="label">Nights:</span> <span class="value">${booking.payment.nights}</span></div>
                 <div><span class="label">Base Price:</span> <span class="value">₱${booking.payment.basePrice.toLocaleString()}</span></div>
                 <div><span class="label">Extra Guest Fee:</span> <span class="value">₱${booking.payment.extraFee.toLocaleString()}</span></div>
                 <div class="total"><span class="label">Total Payment:</span> ₱${booking.payment.total.toLocaleString()}</div>
+                ` : `
+                <div><span class="label" style="color: #64748b;">Payment information not available</span></div>
+                `}
               </div>
-            </div>` : ''}
+            </div>
             ${(safeStreet || safeCity) ? `
             <div class="section">
               <div class="section-title">Address</div>
@@ -480,11 +768,13 @@ export default function Reservations() {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingBooking(null);
+    setConflictStatus({ hasConflict: false, type: null, message: '' });
+    setRange(undefined);
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    
+
     // Validate CSRF token
     const formDataObj = new FormData(e.currentTarget);
     const csrfToken = formDataObj.get('csrf_token') as string;
@@ -497,28 +787,85 @@ export default function Reservations() {
       });
       return;
     }
-    
+
     try {
+      // Check for conflicts before submission
+      if (conflictStatus.hasConflict) {
+        Swal.fire({
+          icon: 'error',
+          title: conflictStatus.type === 'booking' ? 'Room not available' : 'Under maintenance',
+          text: conflictStatus.message.replace(/[🚫🔧✅]/g, '').trim(),
+          confirmButtonColor: '#3b82f6'
+        });
+        return;
+      }
+
+      // Validate dates and conflicts before saving
+      const roomName = formData.room?.trim();
+      const checkIn = formData.checkIn ? new Date(formData.checkIn).setHours(0, 0, 0, 0) : NaN;
+      const checkOut = formData.checkOut ? new Date(formData.checkOut).setHours(0, 0, 0, 0) : NaN; // exclusive
+
+      if (!roomName || !Number.isFinite(checkIn) || !Number.isFinite(checkOut) || checkOut <= checkIn) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Invalid dates',
+          text: 'Please select a valid room and date range.',
+          confirmButtonColor: '#3b82f6'
+        });
+        return;
+      }
+
+      // Check booking conflicts (exclude the booking being edited)
+      const existing = bookedByRoom[roomName] || [];
+      const overlapsBooking = existing.some(r => r.id !== editingBooking?.id && checkIn < r.end && checkOut > r.start);
+      if (overlapsBooking) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Room not available',
+          text: 'The selected dates overlap with an existing booking for this room.',
+          confirmButtonColor: '#3b82f6'
+        });
+        return;
+      }
+
+      // Check maintenance conflicts
+      const maintenance = maintenanceByRoom[roomName] || [];
+      const overlapsMaintenance = maintenance.some(r => checkIn < r.end && checkOut > r.start);
+      if (overlapsMaintenance) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Under maintenance',
+          text: 'The selected dates fall within a maintenance window for this room.',
+          confirmButtonColor: '#3b82f6'
+        });
+        return;
+      }
+
+      // Show loading
       Swal.fire({
         title: editingBooking ? 'Updating...' : 'Creating...',
-        didOpen: async () => {
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        didOpen: () => {
           Swal.showLoading();
-          if (editingBooking) {
-            await updateDoc(doc(db, 'bookings', editingBooking.id), {
-              ...formData,
-              updatedAt: serverTimestamp()
-            });
-          } else {
-            await addDoc(collection(db, 'bookings'), {
-              ...formData,
-              createdAt: serverTimestamp()
-            });
-          }
-        },
-        willClose: () => {}
+        }
       });
 
-      Swal.fire({
+      // Perform the database operation
+      if (editingBooking) {
+        await updateDoc(doc(db, 'bookings', editingBooking.id), {
+          ...formData,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        await addDoc(collection(db, 'bookings'), {
+          ...formData,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      // Close loading and show success
+      await Swal.fire({
         icon: 'success',
         title: 'Success!',
         text: editingBooking ? 'Reservation updated successfully' : 'Reservation created successfully',
@@ -617,8 +964,8 @@ export default function Reservations() {
             <button
               onClick={() => setFilter('all')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                filter === 'all' 
-                  ? 'bg-blue-600 text-white' 
+                filter === 'all'
+                  ? 'bg-blue-600 text-white'
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
@@ -627,8 +974,8 @@ export default function Reservations() {
             <button
               onClick={() => setFilter('pending')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                filter === 'pending' 
-                  ? 'bg-amber-500 text-white' 
+                filter === 'pending'
+                  ? 'bg-amber-500 text-white'
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
@@ -637,8 +984,8 @@ export default function Reservations() {
             <button
               onClick={() => setFilter('confirmed')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                filter === 'confirmed' 
-                  ? 'bg-green-500 text-white' 
+                filter === 'confirmed'
+                  ? 'bg-green-500 text-white'
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
@@ -647,8 +994,8 @@ export default function Reservations() {
             <button
               onClick={() => setFilter('cancelled')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                filter === 'cancelled' 
-                  ? 'bg-red-500 text-white' 
+                filter === 'cancelled'
+                  ? 'bg-red-500 text-white'
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
@@ -657,8 +1004,8 @@ export default function Reservations() {
             <button
               onClick={() => setFilter('completed')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                filter === 'completed' 
-                  ? 'bg-blue-500 text-white' 
+                filter === 'completed'
+                  ? 'bg-blue-500 text-white'
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
@@ -764,29 +1111,30 @@ export default function Reservations() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-sm whitespace-nowrap">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           {/* Status Dropdown */}
                           <div className="relative">
                             <button
                               onClick={() => setOpenDropdown(openDropdown === booking.id ? null : booking.id)}
-                              className="p-2 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500"
+                              className="px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1 flex items-center gap-1.5"
                               title="Change Status"
                               aria-label={`Change status for ${booking.name} ${booking.surname}`}
                               aria-expanded={openDropdown === booking.id}
                               aria-haspopup="true"
                             >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
                               </svg>
+                              <span>Status</span>
                             </button>
                             {openDropdown === booking.id && (
-                              <div className="absolute right-0 mt-2 w-40 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-10">
+                              <div className="absolute right-0 mt-2 w-44 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-10">
                                 <button
                                   onClick={() => {
                                     updateBookingStatus(booking.id, 'confirmed');
                                     setOpenDropdown(null);
                                   }}
-                                  className="w-full px-4 py-2 text-left text-sm text-green-700 hover:bg-green-50 dark:hover:bg-green-900/20 flex items-center gap-2 rounded-t-lg transition-colors"
+                                  className="w-full px-4 py-2 text-left text-sm text-green-700 hover:bg-green-50 dark:hover:bg-green-900/20 flex items-center gap-2 rounded-t-lg transition-colors font-medium"
                                 >
                                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -798,7 +1146,7 @@ export default function Reservations() {
                                     updateBookingStatus(booking.id, 'pending');
                                     setOpenDropdown(null);
                                   }}
-                                  className="w-full px-4 py-2 text-left text-sm text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 flex items-center gap-2 transition-colors"
+                                  className="w-full px-4 py-2 text-left text-sm text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 flex items-center gap-2 transition-colors font-medium"
                                 >
                                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -810,7 +1158,7 @@ export default function Reservations() {
                                     updateBookingStatus(booking.id, 'cancelled');
                                     setOpenDropdown(null);
                                   }}
-                                  className="w-full px-4 py-2 text-left text-sm text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 transition-colors"
+                                  className="w-full px-4 py-2 text-left text-sm text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 transition-colors font-medium"
                                 >
                                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -823,7 +1171,7 @@ export default function Reservations() {
                                       updateBookingStatus(booking.id, 'completed');
                                       setOpenDropdown(null);
                                     }}
-                                    className="w-full px-4 py-2 text-left text-sm text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 flex items-center gap-2 rounded-b-lg transition-colors"
+                                    className="w-full px-4 py-2 text-left text-sm text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 flex items-center gap-2 rounded-b-lg transition-colors font-medium"
                                   >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -837,33 +1185,36 @@ export default function Reservations() {
 
                           <button
                             onClick={() => printBooking(booking)}
-                            className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 flex items-center gap-1.5"
                             title="Print"
                             aria-label={`Print reservation for ${booking.name} ${booking.surname}`}
                           >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
                             </svg>
+                            <span>Print</span>
                           </button>
                           <button
                             onClick={() => handleOpenModal(booking)}
-                            className="p-2 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-green-500"
+                            className="px-3 py-1.5 text-xs font-semibold text-white bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 flex items-center gap-1.5"
                             title="Edit"
                             aria-label={`Edit reservation for ${booking.name} ${booking.surname}`}
                           >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                             </svg>
+                            <span>Edit</span>
                           </button>
                           <button
                             onClick={() => deleteBooking(booking.id)}
-                            className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+                            className="px-3 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1 flex items-center gap-1.5"
                             title="Delete"
                             aria-label={`Delete reservation for ${booking.name} ${booking.surname}`}
                           >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
+                            <span>Delete</span>
                           </button>
                         </div>
                       </td>
@@ -1054,30 +1405,95 @@ export default function Reservations() {
                         className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Check-in Date <span className="text-red-500">*</span>
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Select Dates (Check-in to Check-out) <span className="text-red-500">*</span>
                       </label>
-                      <input
-                        type="date"
-                        required
-                        value={formData.checkIn || ''}
-                        onChange={(e) => setFormData({ ...formData, checkIn: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                      />
+                      {!formData.room ? (
+                        <div className="rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 p-8 text-center">
+                          <svg className="w-12 h-12 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                          </svg>
+                          <p className="text-gray-500 dark:text-gray-400 font-medium">Please select a room first</p>
+                        </div>
+                      ) : (
+                        <div className={`rounded-lg border-2 p-4 transition-colors ${
+                          conflictStatus.hasConflict
+                            ? conflictStatus.type === 'booking'
+                              ? 'border-red-300 bg-red-50 dark:bg-red-900/10 dark:border-red-800'
+                              : 'border-orange-300 bg-orange-50 dark:bg-orange-900/10 dark:border-orange-800'
+                            : formData.checkIn && formData.checkOut
+                            ? 'border-green-300 bg-green-50 dark:bg-green-900/10 dark:border-green-800'
+                            : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'
+                        }`}>
+                          <DayPicker
+                            mode="range"
+                            selected={range}
+                            onSelect={setRange}
+                            disabled={[{ before: new Date() }, ...disabledRanges()]}
+                            numberOfMonths={1}
+                            showOutsideDays
+                            weekStartsOn={1}
+                            captionLayout="dropdown"
+                            className="dark:text-white"
+                          />
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                            ℹ️ Blocked dates are already booked or under maintenance. Checkout day is available for new check-ins.
+                          </p>
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Check-out Date <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="date"
-                        required
-                        value={formData.checkOut || ''}
-                        onChange={(e) => setFormData({ ...formData, checkOut: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                      />
-                    </div>
+                    {/* Conflict Status Indicator */}
+                    {formData.room && formData.checkIn && formData.checkOut && (
+                      <div className="md:col-span-2">
+                        <div className={`px-4 py-3 rounded-lg flex items-start gap-3 ${
+                          conflictStatus.hasConflict
+                            ? conflictStatus.type === 'booking'
+                              ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
+                              : 'bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800'
+                            : 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
+                        }`}>
+                          <span className="text-lg mt-0.5">
+                            {conflictStatus.hasConflict
+                              ? conflictStatus.type === 'booking'
+                                ? '🚫'
+                                : '🔧'
+                              : '✅'
+                            }
+                          </span>
+                          <div>
+                            <p className={`text-sm font-semibold ${
+                              conflictStatus.hasConflict
+                                ? conflictStatus.type === 'booking'
+                                  ? 'text-red-700 dark:text-red-400'
+                                  : 'text-orange-700 dark:text-orange-400'
+                                : 'text-green-700 dark:text-green-400'
+                            }`}>
+                              {conflictStatus.hasConflict
+                                ? conflictStatus.type === 'booking'
+                                  ? 'Booking Conflict'
+                                  : 'Maintenance Block'
+                                : 'Available'
+                              }
+                            </p>
+                            <p className={`text-sm mt-1 ${
+                              conflictStatus.hasConflict
+                                ? conflictStatus.type === 'booking'
+                                  ? 'text-red-600 dark:text-red-300'
+                                  : 'text-orange-600 dark:text-orange-300'
+                                : 'text-green-600 dark:text-green-300'
+                            }`}>
+                              {conflictStatus.message}
+                            </p>
+                            {conflictStatus.hasConflict && (
+                              <p className="text-xs mt-2 text-gray-600 dark:text-gray-400">
+                                Please select different dates or choose another room.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <div className="md:col-span-2">
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                         Status <span className="text-red-500">*</span>
@@ -1106,31 +1522,133 @@ export default function Reservations() {
                     Address
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Street Address</label>
-                      <input
-                        type="text"
-                        value={formData.street || ''}
-                        onChange={(e) => setFormData({ ...formData, street: e.target.value })}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Country <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        name="country"
+                        required
+                        value={formData.country || 'Philippines'}
+                        onChange={handleAddressChange}
                         className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                      />
+                      >
+                        <option value="Philippines">Philippines</option>
+                        <option value="United States">United States</option>
+                        <option value="Japan">Japan</option>
+                        <option value="South Korea">South Korea</option>
+                        <option value="China">China</option>
+                      </select>
+                      {formData.country === "Philippines" && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Address dropdowns will auto-populate</p>
+                      )}
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">City</label>
-                      <input
-                        type="text"
-                        value={formData.city || ''}
-                        onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Region <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        name="region"
+                        required
+                        value={formData.region || ''}
+                        onChange={handleAddressChange}
                         className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                      />
+                        disabled={addressLoading || formData.country !== "Philippines"}
+                      >
+                        <option value="">Select Region</option>
+                        {regions.map((region) => (
+                          <option key={region.code} value={region.name}>
+                            {region.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Province</label>
-                      <input
-                        type="text"
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Province <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        name="province"
+                        required
                         value={formData.province || ''}
-                        onChange={(e) => setFormData({ ...formData, province: e.target.value })}
+                        onChange={handleAddressChange}
                         className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={addressLoading || !formData.region}
+                      >
+                        <option value="">Select Province</option>
+                        {provinces.map((province) => (
+                          <option key={province.code} value={province.name}>
+                            {province.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        City/Municipality <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        name="city"
+                        required
+                        value={formData.city || ''}
+                        onChange={handleAddressChange}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={addressLoading || !formData.province}
+                      >
+                        <option value="">Select City/Municipality</option>
+                        {cities.map((city) => (
+                          <option key={city.code} value={city.name}>
+                            {city.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Barangay <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        name="barangay"
+                        required
+                        value={formData.barangay || ''}
+                        onChange={handleAddressChange}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={addressLoading || !formData.city}
+                      >
+                        <option value="">Select Barangay</option>
+                        {barangays.map((barangay) => (
+                          <option key={barangay.code} value={barangay.name}>
+                            {barangay.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Street/Building <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="street"
+                        required
+                        value={formData.street || ''}
+                        onChange={handleAddressChange}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        placeholder="House No., Street Name"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        ZIP Code <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="zip"
+                        required
+                        value={formData.zip || ''}
+                        onChange={handleAddressChange}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        placeholder="8307"
                       />
                     </div>
                   </div>

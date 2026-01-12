@@ -272,3 +272,69 @@ section .btn-book-now:focus {
   transition: 200ms !important;
   color: var(--btn-book-now-text) !important;
 }
+
+/* Custom styles for react-day-picker in dark mode */
+.dark .rdp {
+  --rdp-cell-size: 40px;
+  --rdp-accent-color: #3b82f6;
+  --rdp-background-color: #1f2937;
+  --rdp-accent-color-dark: #2563eb;
+}
+
+.dark .rdp-day_selected {
+  background-color: #3b82f6 !important;
+  color: white !important;
+}
+
+.dark .rdp-day_today {
+  font-weight: bold;
+  color: #60a5fa;
+}
+
+.dark .rdp-button:hover:not([disabled]) {
+  background-color: #374151;
+}
+
+.dark .rdp-day_disabled {
+  color: #6b7280;
+  text-decoration: line-through;
+  background-color: #1f2937;
+  cursor: not-allowed;
+}
+
+.dark .rdp-nav_button {
+  color: #9ca3af;
+}
+
+.dark .rdp-nav_button:hover {
+  background-color: #374151;
+}
+
+.dark .rdp-caption_label {
+  color: #f3f4f6;
+}
+
+.dark .rdp-head_cell {
+  color: #9ca3af;
+}
+
+/* Make disabled dates more visible */
+.rdp-day_disabled {
+  background-color: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 5px,
+    rgba(239, 68, 68, 0.1) 5px,
+    rgba(239, 68, 68, 0.1) 10px
+  );
+}
+
+.dark .rdp-day_disabled {
+  background-color: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 5px,
+    rgba(239, 68, 68, 0.2) 5px,
+    rgba(239, 68, 68, 0.2) 10px
+  );
+}
