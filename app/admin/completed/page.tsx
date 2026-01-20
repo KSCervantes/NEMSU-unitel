@@ -61,26 +61,38 @@ export default function Completed() {
   }
 
   // Filter bookings
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = today.toISOString().split('T')[0];
+  
+  // Check-ins: Guests arriving today (check-in date is today)
   const checkIns = bookings.filter(b => {
     if (!b.checkIn) return false;
     const checkInDate = b.checkIn.split('T')[0];
-    return checkInDate === today && b.status === 'confirmed';
+    return checkInDate === todayStr && (b.status === 'confirmed' || b.status === 'pending');
   });
 
+  // Check-outs: Guests leaving today (check-out date is today)
   const checkOuts = bookings.filter(b => {
     if (!b.checkOut) return false;
     const checkOutDate = b.checkOut.split('T')[0];
-    return checkOutDate === today && b.status === 'confirmed';
+    return checkOutDate === todayStr && b.status === 'confirmed';
   });
 
+  // Past check-outs: Only show recent past check-outs (last 30 days) to avoid loading thousands of records
+  const thirtyDaysAgo = new Date(today);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+  
   const pastCheckOuts = bookings.filter(b => {
     if (!b.checkOut) return false;
     const checkOutDate = b.checkOut.split('T')[0];
-    return checkOutDate < today && b.status === 'confirmed';
+    return checkOutDate < todayStr && checkOutDate >= thirtyDaysAgoStr && b.status === 'confirmed';
   });
 
   const cancelled = bookings.filter(b => b.status === 'cancelled');
+  
+  // Completed: Bookings that have been marked as completed (checked out and finalized)
   const completed = bookings.filter(b => b.status === 'completed');
 
   const getDisplayData = () => {
@@ -127,7 +139,7 @@ export default function Completed() {
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Check-outs</p>
             <p className="text-3xl font-semibold text-gray-900 dark:text-white">{checkOuts.length + pastCheckOuts.length}</p>
-            <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Completed stays</p>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Today + last 30 days</p>
           </div>
 
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
@@ -199,9 +211,9 @@ export default function Completed() {
                 title="No records found"
                 description={
                   activeTab === 'checkins' 
-                    ? "No check-ins scheduled for today. Check-ins will appear here when guests arrive."
+                    ? "No check-ins scheduled for today. Bookings with today's check-in date will appear here."
                     : activeTab === 'checkouts'
-                    ? "No check-outs scheduled. Completed stays will appear here."
+                    ? "No check-outs in the last 30 days. Guests who checked out recently will appear here."
                     : activeTab === 'cancelled'
                     ? "No cancelled bookings found. Cancelled reservations will appear here."
                     : "No completed bookings found. Bookings marked as completed will appear here."
