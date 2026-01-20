@@ -63,31 +63,48 @@ export default function Completed() {
   // Filter bookings
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().split('T')[0];
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  
+  // Helper to safely parse date string to Date object (handles both ISO and local formats)
+  const parseBookingDate = (dateStr: string | undefined): Date | null => {
+    if (!dateStr) return null;
+    try {
+      // Handle ISO format with T separator
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return null;
+      return d;
+    } catch {
+      return null;
+    }
+  };
   
   // Check-ins: Guests arriving today (check-in date is today)
   const checkIns = bookings.filter(b => {
-    if (!b.checkIn) return false;
-    const checkInDate = b.checkIn.split('T')[0];
-    return checkInDate === todayStr && (b.status === 'confirmed' || b.status === 'pending');
+    const checkInDate = parseBookingDate(b.checkIn);
+    if (!checkInDate) return false;
+    checkInDate.setHours(0, 0, 0, 0);
+    return checkInDate.getTime() === today.getTime() && (b.status === 'confirmed' || b.status === 'pending');
   });
 
   // Check-outs: Guests leaving today (check-out date is today)
   const checkOuts = bookings.filter(b => {
-    if (!b.checkOut) return false;
-    const checkOutDate = b.checkOut.split('T')[0];
-    return checkOutDate === todayStr && b.status === 'confirmed';
+    const checkOutDate = parseBookingDate(b.checkOut);
+    if (!checkOutDate) return false;
+    checkOutDate.setHours(0, 0, 0, 0);
+    return checkOutDate.getTime() === today.getTime() && b.status === 'confirmed';
   });
 
   // Past check-outs: Only show recent past check-outs (last 30 days) to avoid loading thousands of records
   const thirtyDaysAgo = new Date(today);
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
   
   const pastCheckOuts = bookings.filter(b => {
-    if (!b.checkOut) return false;
-    const checkOutDate = b.checkOut.split('T')[0];
-    return checkOutDate < todayStr && checkOutDate >= thirtyDaysAgoStr && b.status === 'confirmed';
+    const checkOutDate = parseBookingDate(b.checkOut);
+    if (!checkOutDate) return false;
+    checkOutDate.setHours(0, 0, 0, 0);
+    const checkOutTime = checkOutDate.getTime();
+    return checkOutTime < today.getTime() && checkOutTime >= thirtyDaysAgo.getTime() && b.status === 'confirmed';
   });
 
   const cancelled = bookings.filter(b => b.status === 'cancelled');
