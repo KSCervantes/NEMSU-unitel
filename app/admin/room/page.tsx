@@ -108,7 +108,7 @@ export default function RoomManagement() {
     }
   }, [roomTypes, fetchRoomStatus]);
 
-  const fetchRoomStatus = useCallback(() => {
+  function fetchRoomStatus() {
     try {
       const bookingsRef = collection(db, 'bookings');
       // Limit listener to active bookings for performance
@@ -214,7 +214,7 @@ export default function RoomManagement() {
     } catch (error) {
       logError('Error fetching room status:', error);
     }
-  }, [roomTypes]);
+  }
 
   // Removed unused aggregate helpers to satisfy lint
 
