@@ -7,8 +7,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { auth, db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, where, Timestamp, getDocs } from 'firebase/firestore';
-import { Room } from '@/lib/types/room';
+import { collection, query, orderBy, onSnapshot, getDocs } from 'firebase/firestore';
 import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
 import { logInfo, logError } from '@/lib/logger';
 
@@ -23,7 +22,7 @@ interface Booking {
   checkOut: string;
   guests: string;
   status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
-  createdAt: any;
+  createdAt: { seconds: number; nanoseconds: number } | Date;
   phone?: string;
   street?: string;
   street1?: string;
@@ -41,55 +40,30 @@ interface MaintenanceTask {
   issue: string;
   priority: string;
   status: string;
-  createdAt: any;
+  createdAt: { seconds: number; nanoseconds: number } | Date;
 }
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const adminEmail = typeof window !== 'undefined' ? sessionStorage.getItem('adminEmail') : null;
+  const hasAdminSession = typeof window !== 'undefined' && sessionStorage.getItem('adminAuth') === 'true';
+  const isAuthenticated = Boolean(hasAdminSession && adminEmail && isNemsuEmail(adminEmail) && isAuthorizedAdmin(adminEmail));
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [maintenanceTasks, setMaintenanceTasks] = useState<MaintenanceTask[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [rooms, setRooms] = useState<Room[]>([]);
   const [totalRooms, setTotalRooms] = useState<number>(0);
-  const [roomTypes, setRoomTypes] = useState<string[]>([]);
-  const [underMaintenance, setUnderMaintenance] = useState<number>(0);
-  const [roomsUnderMaintenance, setRoomsUnderMaintenance] = useState<Set<string>>(new Set());
   const [todayCheckIns, setTodayCheckIns] = useState<number>(0);
   const [todayCheckOuts, setTodayCheckOuts] = useState<number>(0);
+  const [underMaintenance, setUnderMaintenance] = useState<number>(0);
+  const [renderNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const adminAuth = sessionStorage.getItem('adminAuth');
-    const adminEmail = sessionStorage.getItem('adminEmail');
-
-    // Check authentication
-    if (adminAuth !== 'true') {
+    if (!isAuthenticated) {
+      auth.signOut();
+      sessionStorage.removeItem('adminAuth');
+      sessionStorage.removeItem('adminEmail');
       router.push('/admin');
       return;
     }
-
-    // Check if email exists and is from Google Sign-In
-    if (adminEmail && adminEmail.includes('@')) {
-      // First check: Must be NEMSU institution email
-      if (!isNemsuEmail(adminEmail)) {
-        auth.signOut();
-        sessionStorage.removeItem('adminAuth');
-        sessionStorage.removeItem('adminEmail');
-        router.push('/admin');
-        return;
-      }
-
-      // Second check: Must be in authorized list
-      if (!isAuthorizedAdmin(adminEmail)) {
-        auth.signOut();
-        sessionStorage.removeItem('adminAuth');
-        sessionStorage.removeItem('adminEmail');
-        router.push('/admin');
-        return;
-      }
-    }
-
-    setIsAuthenticated(true);
 
     const bookingsQuery = query(collection(db, 'bookings'), orderBy('createdAt', 'desc'));
     const unsubscribeBookings = onSnapshot(bookingsQuery, (snapshot) => {
@@ -118,7 +92,6 @@ export default function AdminDashboard() {
       logInfo('✅ Check-ins today:', checkInsToday);
       logInfo('👋 Check-outs today:', checkOutsToday);
 
-      setLoading(false);
     });
 
     // Fetch room types from Firestore (factual source)
@@ -133,37 +106,14 @@ export default function AdminDashboard() {
 
           logInfo('🏨 Total documents in rooms collection:', snapshot.docs.length);
           logInfo('🏨 Unique room types:', uniqueRoomNames.length);
-          logInfo('🏨 Room types:', uniqueRoomNames);
-
-          setRoomTypes(uniqueRoomNames);
           setTotalRooms(uniqueRoomNames.length);
-
-          // Also store full room data
-          const roomsData: Room[] = [];
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            roomsData.push({
-              id: doc.id,
-              name: data.name,
-              price: data.price,
-              description: data.description || '',
-              image: data.image || '',
-              perBed: data.perBed,
-              maxGuests: data.maxGuests || 2,
-            } as Room);
-          });
-          setRooms(roomsData);
         } else {
           // If collection is empty, set empty arrays
-          setRoomTypes([]);
           setTotalRooms(0);
-          setRooms([]);
         }
       } catch (error) {
         logError('Error fetching rooms from Firestore:', error);
-        setRoomTypes([]);
         setTotalRooms(0);
-        setRooms([]);
       }
     };
 
@@ -185,7 +135,6 @@ export default function AdminDashboard() {
           maintenanceSet.add(t.room);
         }
       });
-      setRoomsUnderMaintenance(maintenanceSet);
       setUnderMaintenance(maintenanceSet.size);
     });
 
@@ -193,7 +142,7 @@ export default function AdminDashboard() {
       unsubscribeBookings();
       unsubscribeMaintenance();
     };
-  }, [router]);
+  }, [isAuthenticated, router]);
 
   if (!isAuthenticated) {
     return (
@@ -256,16 +205,42 @@ export default function AdminDashboard() {
     }))
   ]
   .sort((a, b) => {
-    const timeA = a.time?.toMillis?.() || 0;
-    const timeB = b.time?.toMillis?.() || 0;
+    const toTime = (ts: { seconds?: number; nanoseconds?: number; toMillis?: () => number } | Date | number | null | undefined) => {
+      if (!ts) return 0;
+      if (typeof ts === 'number') return ts;
+      if (ts instanceof Date) return ts.getTime();
+      if (typeof ts.toMillis === 'function') return ts.toMillis();
+      if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+      return 0;
+    };
+
+    const timeA = toTime(a.time);
+    const timeB = toTime(b.time);
     return timeB - timeA;
   })
   .slice(0, 8);
 
-  const getTimeAgo = (timestamp: any) => {
+  const getTimeAgo = (
+    timestamp:
+      | { toMillis?: () => number; seconds?: number; nanoseconds?: number }
+      | Date
+      | number
+      | null
+  ) => {
     if (!timestamp) return 'Recently';
-    const now = Date.now();
-    const time = timestamp.toMillis?.() || timestamp;
+    const now = renderNow;
+    let time: number;
+    if (typeof timestamp === 'number') {
+      time = timestamp;
+    } else if (timestamp instanceof Date) {
+      time = timestamp.getTime();
+    } else if (timestamp.toMillis && typeof timestamp.toMillis === 'function') {
+      time = timestamp.toMillis();
+    } else if (typeof timestamp.seconds === 'number') {
+      time = timestamp.seconds * 1000;
+    } else {
+      return 'Recently';
+    }
     const diff = now - time;
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);

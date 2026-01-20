@@ -8,7 +8,7 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 /**
  * Log info messages (only in development)
  */
-export function logInfo(...args: any[]): void {
+export function logInfo(...args: unknown[]): void {
   if (isDevelopment) {
     console.log('[INFO]', ...args);
   }
@@ -17,7 +17,7 @@ export function logInfo(...args: any[]): void {
 /**
  * Log error messages (always logged)
  */
-export function logError(...args: any[]): void {
+export function logError(...args: unknown[]): void {
   console.error('[ERROR]', ...args);
   // In production, send to error tracking service (e.g., Sentry)
   // if (process.env.NODE_ENV === 'production') {
@@ -28,7 +28,7 @@ export function logError(...args: any[]): void {
 /**
  * Log warning messages (only in development)
  */
-export function logWarning(...args: any[]): void {
+export function logWarning(...args: unknown[]): void {
   if (isDevelopment) {
     console.warn('[WARN]', ...args);
   }
@@ -37,7 +37,7 @@ export function logWarning(...args: any[]): void {
 /**
  * Log debug messages (only in development)
  */
-export function logDebug(...args: any[]): void {
+export function logDebug(...args: unknown[]): void {
   if (isDevelopment) {
     console.debug('[DEBUG]', ...args);
   }

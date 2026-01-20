@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from '../context/SidebarContext';
 
@@ -10,7 +11,6 @@ export default function Sidebar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const { isCollapsed, toggleCollapse } = useSidebar();
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => (typeof window !== 'undefined' && (localStorage.getItem('adminTheme') as 'light' | 'dark')) || 'light');
 
   const menuItems = [
     {
@@ -120,19 +120,22 @@ export default function Sidebar() {
           {/* Logo */}
           <div className="flex items-center justify-center h-20 px-6 border-b border-gray-700 relative">
             <div className={`text-center transition-all duration-300 ${isCollapsed ? 'opacity-0 scale-90' : 'opacity-100 scale-100'}`}>
-              <img
+              <Image
                 src="/img/NEMSU_LOGOO.webp"
                 alt="UNITEL Logo"
-                className="h-12 w-auto mx-auto"
+                width={120}
+                height={48}
+                className="mx-auto"
               />
               <p className="text-xs text-gray-300 mt-2 font-medium">Hotel Management</p>
             </div>
             {isCollapsed && (
               <div className="absolute inset-0 flex items-center justify-center">
-                <img
+                <Image
                   src="/img/NEMSU_LOGOO.webp"
                   alt="UNITEL Logo"
-                  className="h-10 w-auto"
+                  width={100}
+                  height={40}
                 />
               </div>
             )}

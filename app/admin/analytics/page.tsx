@@ -4,13 +4,12 @@ export const dynamic = "force-dynamic";
 
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { collection, query, onSnapshot } from 'firebase/firestore';
 
 interface RoomStats {
   [key: string]: number;
@@ -24,8 +23,7 @@ interface StatusStats {
 }
 
 export default function Analytics() {
-  const router = useRouter();
-  const { isAuthenticated, isLoading } = useProtectedAdminPage();
+  const { isAuthenticated } = useProtectedAdminPage();
   const [roomStats, setRoomStats] = useState<RoomStats>({});
   const [statusStats, setStatusStats] = useState<StatusStats>({ pending: 0, confirmed: 0, cancelled: 0, completed: 0 });
   const [totalBookings, setTotalBookings] = useState(0);
@@ -133,7 +131,7 @@ export default function Analytics() {
             {/* Legend */}
             <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
               <div className="flex flex-wrap gap-2 justify-center">
-                {Object.entries(roomStats).map(([room, count], idx) => (
+                {Object.keys(roomStats).map((room, idx) => (
                   <div key={room} className="flex items-center gap-2 px-2 py-1 bg-gray-50 dark:bg-gray-700/50 rounded text-xs">
                     <div
                       className="w-2 h-2 rounded-full"
@@ -274,7 +272,7 @@ export default function Analytics() {
             {/* Legend */}
             <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
               <div className="grid grid-cols-2 gap-2">
-                {Object.entries(roomStats).map(([room, count], idx) => (
+                {Object.keys(roomStats).map((room, idx) => (
                   <div key={room} className="flex items-center gap-2 px-2 py-1 bg-gray-50 dark:bg-gray-700/50 rounded text-xs">
                     <div
                       className="w-2 h-2 rounded-full"

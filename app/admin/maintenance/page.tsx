@@ -1,8 +1,8 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export const dynamic = "force-dynamic";
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
@@ -13,6 +13,7 @@ import EmptyState from '@/app/components/EmptyState';
 import LoadingSpinner from '@/app/components/LoadingSpinner';
 import ModalWithFocusTrap from '@/app/components/ModalWithFocusTrap';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
+import Image from 'next/image';
 
 interface MaintenanceTask {
   id: string;
@@ -36,8 +37,7 @@ interface RoomData {
 }
 
 export default function Maintenance() {
-  const router = useRouter();
-  const { isAuthenticated, isLoading } = useProtectedAdminPage();
+  const { isAuthenticated } = useProtectedAdminPage();
 
   // Enable keyboard navigation
   useKeyboardNavigation();
@@ -443,9 +443,11 @@ export default function Maintenance() {
                           }`}
                         >
                           {room.image ? (
-                            <img
+                            <Image
                               src={room.image}
                               alt={room.name}
+                              width={400}
+                              height={160}
                               className="w-full h-24 object-cover"
                             />
                           ) : (

@@ -12,9 +12,9 @@ interface Booking {
   surname?: string;
   email?: string;
   mobile?: string;
-  status: string;
-  checkIn: string;
-  checkOut: string;
+  status?: string;
+  checkIn?: string;
+  checkOut?: string;
 }
 
 export default function RoomBookingsPage() {
@@ -33,12 +33,17 @@ export default function RoomBookingsPage() {
     let countBySlug = 0;
     let countByName = 0;
     let countByRawSlugName = 0;
+    let roomNameFromDocState: string | undefined;
 
-    const commit = (label?: string) => {
+    const commit = () => {
       const rows = Array.from(rowsMap.values());
-      rows.sort((a, b) => new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime());
+      rows.sort((a, b) => {
+        const ai = a.checkIn ? new Date(a.checkIn).getTime() : 0;
+        const bi = b.checkIn ? new Date(b.checkIn).getTime() : 0;
+        return ai - bi;
+      });
       setBookings(rows);
-      setDebugInfo({ slug, displayName, roomNameFromDoc: debugInfo?.roomNameFromDoc, countBySlug, countByName, countByRawSlugName });
+      setDebugInfo({ slug, displayName, roomNameFromDoc: roomNameFromDocState, countBySlug, countByName, countByRawSlugName });
     };
 
     (async () => {
@@ -48,38 +53,50 @@ export default function RoomBookingsPage() {
         const roomRef = doc(db, 'rooms', slug);
         const snap = await getDoc(roomRef);
         if (snap.exists()) {
-          const data = snap.data() as any;
+          const data = snap.data() as { name?: string };
           if (data?.name) roomNameFromDoc = data.name as string;
         }
       } catch {}
+
+      roomNameFromDocState = roomNameFromDoc;
 
       const qBySlug = query(collection(db, 'bookings'), where('roomSlug', '==', slug));
       const qByName = query(collection(db, 'bookings'), where('room', '==', roomNameFromDoc || displayName));
       const qByRawSlugName = query(collection(db, 'bookings'), where('room', '==', slug)); // fallback if someone stored slug in 'room'
 
-      const applySnapSlug = (snap: any) => {
+      type BookingDoc = {
+        name?: string;
+        surname?: string;
+        email?: string;
+        mobile?: string;
+        status?: string;
+        checkIn?: string;
+        checkOut?: string;
+      };
+
+      const applySnapSlug = (snap: { size?: number; forEach: (cb: (doc: { id: string; data: () => BookingDoc }) => void) => void }) => {
         countBySlug = snap.size || 0;
-        snap.forEach((doc: any) => {
-          const d = doc.data() as any;
+        snap.forEach((doc) => {
+          const d = doc.data();
           rowsMap.set(doc.id, { id: doc.id, ...d });
         });
-        commit('slug');
+        commit();
       };
-      const applySnapName = (snap: any) => {
+      const applySnapName = (snap: { size?: number; forEach: (cb: (doc: { id: string; data: () => BookingDoc }) => void) => void }) => {
         countByName = snap.size || 0;
-        snap.forEach((doc: any) => {
-          const d = doc.data() as any;
+        snap.forEach((doc) => {
+          const d = doc.data();
           rowsMap.set(doc.id, { id: doc.id, ...d });
         });
-        commit('name');
+        commit();
       };
-      const applySnapRawSlugName = (snap: any) => {
+      const applySnapRawSlugName = (snap: { size?: number; forEach: (cb: (doc: { id: string; data: () => BookingDoc }) => void) => void }) => {
         countByRawSlugName = snap.size || 0;
-        snap.forEach((doc: any) => {
-          const d = doc.data() as any;
+        snap.forEach((doc) => {
+          const d = doc.data();
           rowsMap.set(doc.id, { id: doc.id, ...d });
         });
-        commit('raw');
+        commit();
       };
 
       const unsubSlug = onSnapshot(qBySlug, applySnapSlug);
@@ -131,8 +148,8 @@ export default function RoomBookingsPage() {
                   <td className="py-2 px-3">{b.email || '—'}</td>
                   <td className="py-2 px-3">{b.mobile || '—'}</td>
                   <td className="py-2 px-3"><span className={`px-2 py-1 rounded text-xs ${b.status === 'confirmed' ? 'bg-green-100 text-green-700' : b.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-700'}`}>{b.status}</span></td>
-                  <td className="py-2 px-3">{new Date(b.checkIn).toLocaleString()}</td>
-                  <td className="py-2 px-3">{new Date(b.checkOut).toLocaleString()}</td>
+                  <td className="py-2 px-3">{b.checkIn ? new Date(b.checkIn).toLocaleString() : '—'}</td>
+                  <td className="py-2 px-3">{b.checkOut ? new Date(b.checkOut).toLocaleString() : '—'}</td>
                 </tr>
               ))}
             </tbody>

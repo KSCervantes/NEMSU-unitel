@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 /**
  * CSRF (Cross-Site Request Forgery) Protection
  * Generates and validates CSRF tokens for state-changing operations
@@ -8,15 +10,13 @@
  */
 export function generateCSRFToken(): string {
   if (typeof window === 'undefined') {
-    // Server-side: use crypto
-    const crypto = require('crypto');
     return crypto.randomBytes(32).toString('hex');
   }
-  
+
   // Client-side: use Web Crypto API
   const array = new Uint8Array(32);
   crypto.getRandomValues(array);
-  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+  return Array.from(array, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 /**

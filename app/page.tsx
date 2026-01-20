@@ -4,11 +4,11 @@ export const dynamic = "force-dynamic";
 import Image from "next/image";
 import { useState, useEffect } from "react";
 import Navbar from "./components/Navbar";
+import GalaxyBackground from "./components/GalaxyBackground";
 import RoomCard from "./components/RoomCard";
 import BookingModal from "./components/BookingModal";
-import { db, storage } from '@/lib/firebase';
-import { collection, query, where, getDocs, addDoc, doc, setDoc, onSnapshot } from 'firebase/firestore';
-import { ref, getDownloadURL } from 'firebase/storage';
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 
 interface Room {
   id?: string;
@@ -24,7 +24,6 @@ export default function Home() {
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState("");
   const [roomsUnderMaintenance, setRoomsUnderMaintenance] = useState<string[]>([]);
-  const [roomsOccupied, setRoomsOccupied] = useState<string[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
   const [showScrollTop, setShowScrollTop] = useState(false);
@@ -73,11 +72,12 @@ export default function Home() {
 
     // Real-time listeners for maintenance and bookings
     const maintenanceRef = collection(db, 'maintenance');
+    type MaintenanceDoc = { room?: string; status?: string };
     const maintenanceQuery = query(maintenanceRef, where('status', 'in', ['pending', 'in-progress']));
     const unsubscribeMaintenance = onSnapshot(maintenanceQuery, (snapshot) => {
       const underMaintenance: string[] = [];
       snapshot.forEach((doc) => {
-        const data = doc.data() as any;
+        const data = doc.data() as MaintenanceDoc;
         if (data.room && !underMaintenance.includes(data.room)) {
           underMaintenance.push(data.room);
         }
@@ -87,23 +87,10 @@ export default function Home() {
       console.error('Maintenance listener error:', error);
     });
 
+    // Occupancy doc type not used while listener is noop
     const bookingsRef = collection(db, 'bookings');
-    const unsubscribeBookings = onSnapshot(bookingsRef, (snapshot) => {
-      const occupied: string[] = [];
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      snapshot.forEach((doc) => {
-        const data = doc.data() as any;
-        const checkIn = new Date(data.checkIn);
-        const checkOut = new Date(data.checkOut);
-        if (data.status === 'confirmed' && checkIn <= today && checkOut > today) {
-          const roomType = data.room;
-          if (roomType && !occupied.includes(roomType)) {
-            occupied.push(roomType);
-          }
-        }
-      });
-      setRoomsOccupied(occupied);
+    const unsubscribeBookings = onSnapshot(bookingsRef, () => {
+      // Occupancy tracking is currently unused in UI; skip processing
     }, (error) => {
       console.error('Bookings listener error:', error);
     });
@@ -135,6 +122,10 @@ export default function Home() {
         className="relative min-h-screen flex items-center justify-center pt-0 pb-12 sm:pt-28 md:pt-32 lg:pt-0"
         style={{ backgroundColor: '#112240' }}
       >
+        {/* Galaxy background canvas, blended softly behind hero content */}
+        <GalaxyBackground />
+        {/* Subtle overlay to improve contrast */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0b1433]/40 via-transparent to-[#112240]/60" />
         <div className="relative z-10 text-center text-white px-4 sm:px-6 max-w-6xl mx-auto w-full">
           <div className="mb-6 sm:mb-8 md:mb-10 animate-fadeIn">
           </div>
@@ -236,7 +227,7 @@ export default function Home() {
                 affordability right at the heart of NEMSU-Lianga Campus in Poblacion, Lianga, Surigao del Sur.
               </p>
               <p className="text-gray-600 text-lg mb-6 leading-relaxed">
-                Whether you're a visiting professor, student's family member, or traveler exploring
+                Whether you’re a visiting professor, student’s family member, or traveler exploring
                 the beautiful region, our modern facilities and warm hospitality ensure a memorable stay.
               </p>
               <div className="grid grid-cols-2 gap-4 mb-8">
@@ -365,6 +356,7 @@ export default function Home() {
               height={40}
               className="object-contain"
               style={{ width: 'auto', height: '40px' }}
+              loading="eager"
             />
             <div>
               <h3 className="font-poppins font-bold text-xl">UNITEL</h3>

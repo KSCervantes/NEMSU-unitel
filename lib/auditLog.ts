@@ -1,5 +1,6 @@
 import { db } from './firebase';
 import { collection, addDoc, serverTimestamp, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { logInfo, logError } from './logger';
 
 export interface AuditLog {
   id?: string;
@@ -7,7 +8,7 @@ export interface AuditLog {
   action: string;
   resource?: string;
   page: string;
-  timestamp?: any;
+  timestamp?: Date | { seconds: number; nanoseconds: number; toDate?: () => Date };
   ipAddress?: string;
   userAgent?: string;
   status: 'success' | 'failed' | 'unauthorized';
@@ -27,7 +28,7 @@ export const logAdminActivity = async (log: AuditLog): Promise<void> => {
       const response = await fetch('https://api.ipify.org?format=json');
       const data = await response.json();
       ipAddress = data.ip;
-    } catch (error) {
+    } catch {
       // IP fetch failed, use 'unknown'
     }
 
@@ -43,9 +44,9 @@ export const logAdminActivity = async (log: AuditLog): Promise<void> => {
       details: log.details || null,
     });
 
-    console.log('✅ Audit log recorded:', log.action, log.adminEmail);
+    logInfo('Audit log recorded:', log.action, log.adminEmail);
   } catch (error) {
-    console.error('❌ Failed to log admin activity:', error);
+    logError('Failed to log admin activity:', error);
   }
 };
 

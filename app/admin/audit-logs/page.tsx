@@ -3,15 +3,14 @@ export const dynamic = "force-dynamic";
 
 
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import Header from '../components/Header';
 import Sidebar from '../components/Sidebar';
 import {
   getFailedLoginAttempts,
   getUnauthorizedAttempts,
-  getAllAuditLogs,
-  getAdminLogs
+  getAllAuditLogs
 } from '@/lib/auditLog';
 
 interface AuditLog {
@@ -19,7 +18,7 @@ interface AuditLog {
   adminEmail: string;
   action: string;
   page: string;
-  timestamp?: any;
+  timestamp?: { seconds: number; nanoseconds: number } | Date;
   ipAddress?: string;
   userAgent?: string;
   status: 'success' | 'failed' | 'unauthorized';
@@ -32,13 +31,7 @@ export default function AuditLogsPage() {
   const [activeTab, setActiveTab] = useState<'all' | 'failed-logins' | 'unauthorized'>('all');
   const [pageLoading, setPageLoading] = useState(true);
 
-  useEffect(() => {
-    if (isAuthenticated && !isLoading) {
-      fetchLogs();
-    }
-  }, [isAuthenticated, isLoading, activeTab]);
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     setPageLoading(true);
     try {
       let fetchedLogs: AuditLog[] = [];
@@ -57,12 +50,37 @@ export default function AuditLogsPage() {
     } finally {
       setPageLoading(false);
     }
-  };
+  }, [activeTab]);
 
-  const formatDate = (timestamp: any) => {
+  useEffect(() => {
+    if (isAuthenticated && !isLoading) {
+      fetchLogs();
+    }
+  }, [fetchLogs, isAuthenticated, isLoading]);
+
+  const formatDate = (
+    timestamp:
+      | { toDate: () => Date }
+      | { seconds: number; nanoseconds: number; toDate?: () => Date }
+      | Date
+      | number
+      | null
+      | undefined
+  ) => {
     if (!timestamp) return 'N/A';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleString();
+    if (typeof timestamp === 'number') {
+      return new Date(timestamp).toLocaleString();
+    }
+    if (timestamp instanceof Date) {
+      return timestamp.toLocaleString();
+    }
+    if ('toDate' in timestamp && typeof timestamp.toDate === 'function') {
+      return timestamp.toDate().toLocaleString();
+    }
+    if ('seconds' in timestamp) {
+      return new Date(timestamp.seconds * 1000).toLocaleString();
+    }
+    return 'N/A';
   };
 
   const getStatusBadge = (status: string) => {

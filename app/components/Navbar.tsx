@@ -21,7 +21,7 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
   }, []);
 
   const navLinks = [
-    { name: "Home", href: "https://hospitality-management-operation.vercel.app/" },
+    { name: "Home", href: "https://www.nemsu-hm-operation.devworkstudios.net/" },
     { name: "Rooms", href: "#rooms" },
   ];
 

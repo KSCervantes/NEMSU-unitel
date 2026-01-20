@@ -1,8 +1,7 @@
 "use client";
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -11,14 +10,31 @@ import { db } from '@/lib/firebase';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 
 type FilterPeriod = 'all' | 'week' | 'month' | 'year' | string;
+type BookingPayment = {
+  total?: number | string;
+  basePrice?: number | string;
+  extraFee?: number | string;
+  nights?: number;
+};
+
+type RevenueBooking = {
+  id: string;
+  status?: string;
+  payment?: BookingPayment;
+  totalPrice?: number | string;
+  totalAmount?: number | string;
+  createdAt: Date;
+  checkIn?: string | { toDate: () => Date };
+  checkOut?: string | { toDate: () => Date };
+  room?: string;
+  guests?: number | string;
+  nights?: number;
+};
 
 export default function Revenue() {
-  const router = useRouter();
-  const { isAuthenticated, isLoading } = useProtectedAdminPage();
-  const [totalRevenue, setTotalRevenue] = useState(0);
-  const [confirmedBookings, setConfirmedBookings] = useState(0);
+  const { isAuthenticated } = useProtectedAdminPage();
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
-  const [allBookings, setAllBookings] = useState<any[]>([]);
+  const [allBookings, setAllBookings] = useState<RevenueBooking[]>([]);
   const [availableYears, setAvailableYears] = useState<number[]>([]);
 
   useEffect(() => {
@@ -29,16 +45,24 @@ export default function Revenue() {
     // Real-time listener for bookings
     const bookingsQuery = query(collection(db, 'bookings'));
     const unsubscribe = onSnapshot(bookingsQuery, (snapshot) => {
-      const bookings: any[] = [];
+      const bookings: RevenueBooking[] = [];
 
       snapshot.forEach((doc) => {
         const data = doc.data();
         // Include both confirmed and completed bookings in revenue calculation
         if (data.status === 'confirmed' || data.status === 'completed') {
+          const createdAtValue = data.createdAt?.toDate?.() || (data.createdAt ? new Date(data.createdAt) : new Date());
           bookings.push({
             id: doc.id,
-            ...data,
-            createdAt: data.createdAt?.toDate?.() || new Date(data.createdAt) || new Date()
+            status: data.status,
+            payment: data.payment,
+            totalPrice: data.totalPrice,
+            totalAmount: data.totalAmount,
+            createdAt: createdAtValue,
+            checkIn: data.checkIn,
+            checkOut: data.checkOut,
+            room: data.room,
+            guests: data.guests,
           });
         }
       });
@@ -53,7 +77,7 @@ export default function Revenue() {
 
         // Also add year from check-in date if available
         if (booking.checkIn) {
-          const checkInDate = new Date(booking.checkIn);
+          const checkInDate = typeof booking.checkIn === 'string' ? new Date(booking.checkIn) : booking.checkIn.toDate();
           years.add(checkInDate.getFullYear());
         }
       });
@@ -70,53 +94,46 @@ export default function Revenue() {
     return () => unsubscribe();
   }, [isAuthenticated]);
 
-  // Calculate revenue based on filter
-  useEffect(() => {
+  const filteredBookings = useMemo(() => {
     const now = new Date();
-    let filteredBookings = allBookings;
-
     if (filterPeriod === 'week') {
       const oneWeekAgo = new Date();
       oneWeekAgo.setDate(now.getDate() - 7);
-      filteredBookings = allBookings.filter(booking =>
-        booking.createdAt >= oneWeekAgo
-      );
-    } else if (filterPeriod === 'month') {
+      return allBookings.filter(booking => booking.createdAt >= oneWeekAgo);
+    }
+    if (filterPeriod === 'month') {
       const oneMonthAgo = new Date();
       oneMonthAgo.setMonth(now.getMonth() - 1);
-      filteredBookings = allBookings.filter(booking =>
-        booking.createdAt >= oneMonthAgo
-      );
-    } else if (filterPeriod.toString().includes('year-')) {
-      // Filter by specific year (e.g., 'year-2025')
-      const yearStr = filterPeriod.toString().replace('year-', '');
-      const selectedYear = parseInt(yearStr);
-      filteredBookings = allBookings.filter(booking =>
-        booking.createdAt.getFullYear() === selectedYear
-      );
+      return allBookings.filter(booking => booking.createdAt >= oneMonthAgo);
     }
-    // 'all' period uses all bookings (no filter)
+    if (filterPeriod.toString().includes('year-')) {
+      const yearStr = filterPeriod.toString().replace('year-', '');
+      const selectedYear = parseInt(yearStr, 10);
+      return allBookings.filter(booking => booking.createdAt.getFullYear() === selectedYear);
+    }
+    return allBookings;
+  }, [allBookings, filterPeriod]);
 
-    let revenue = 0;
-    filteredBookings.forEach((booking) => {
+  const totalRevenue = useMemo(() => {
+    return filteredBookings.reduce((sum, booking) => {
       let bookingRevenue = 0;
 
       if (booking.payment && typeof booking.payment === 'object' && 'total' in booking.payment) {
-        bookingRevenue = parseFloat(booking.payment.total.toString()) || 0;
+        bookingRevenue = parseFloat(booking.payment.total?.toString() ?? '0') || 0;
       } else if (booking.totalPrice) {
         bookingRevenue = parseFloat(booking.totalPrice.toString()) || 0;
       } else if (booking.totalAmount) {
         bookingRevenue = parseFloat(booking.totalAmount.toString()) || 0;
       }
 
-      if (!isNaN(bookingRevenue) && bookingRevenue > 0) {
-        revenue += bookingRevenue;
+      if (!Number.isNaN(bookingRevenue) && bookingRevenue > 0) {
+        return sum + bookingRevenue;
       }
-    });
+      return sum;
+    }, 0);
+  }, [filteredBookings]);
 
-    setTotalRevenue(revenue);
-    setConfirmedBookings(filteredBookings.length);
-  }, [allBookings, filterPeriod]);
+  const confirmedBookings = filteredBookings.length;
 
   // Export CSV function
   const handleExportCSV = () => {
@@ -141,18 +158,26 @@ export default function Revenue() {
     const headers = ['Booking ID', 'Room', 'Guests', 'Check-in Date', 'Check-out Date', 'Nights', 'Base Price', 'Extra Fee', 'Total Revenue', 'Date Confirmed'];
 
     // Prepare CSV rows
-    const rows = filteredBookings.map(booking => [
-      booking.id || '',
-      booking.room || '',
-      booking.guests || '',
-      booking.checkIn?.toDate?.() ? new Date(booking.checkIn.toDate()).toLocaleDateString() : (booking.checkIn ? new Date(booking.checkIn).toLocaleDateString() : ''),
-      booking.checkOut?.toDate?.() ? new Date(booking.checkOut.toDate()).toLocaleDateString() : (booking.checkOut ? new Date(booking.checkOut).toLocaleDateString() : ''),
-      booking.payment?.nights || booking.nights || '',
-      booking.payment?.basePrice || '',
-      booking.payment?.extraFee || '0',
-      booking.payment?.total || booking.totalPrice || booking.totalAmount || '0',
-      booking.createdAt.toLocaleDateString() + ' ' + booking.createdAt.toLocaleTimeString()
-    ]);
+    const rows = filteredBookings.map(booking => {
+      const ciStr = booking.checkIn
+        ? (typeof booking.checkIn === 'string' ? new Date(booking.checkIn).toLocaleDateString() : booking.checkIn.toDate().toLocaleDateString())
+        : '';
+      const coStr = booking.checkOut
+        ? (typeof booking.checkOut === 'string' ? new Date(booking.checkOut).toLocaleDateString() : booking.checkOut.toDate().toLocaleDateString())
+        : '';
+      return [
+        booking.id || '',
+        booking.room || '',
+        booking.guests || '',
+        ciStr,
+        coStr,
+        booking.payment?.nights || booking.nights || '',
+        booking.payment?.basePrice || '',
+        booking.payment?.extraFee || '0',
+        booking.payment?.total || booking.totalPrice || booking.totalAmount || '0',
+        booking.createdAt.toLocaleDateString() + ' ' + booking.createdAt.toLocaleTimeString()
+      ];
+    });
 
     // Create CSV content
     const csvContent = [

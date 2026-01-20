@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { auth, db } from '@/lib/firebase';
 import { collection, onSnapshot, query, where, orderBy, limit, doc, getDoc, setDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
@@ -15,7 +16,7 @@ interface Activity {
   surname: string;
   room: string;
   status: string;
-  createdAt: any;
+  createdAt: { seconds: number; nanoseconds: number } | Date;
 }
 
 interface UserProfile {
@@ -156,10 +157,21 @@ export default function Header() {
     };
   }, [canAccessData]);
 
-  const getTimeAgo = (timestamp: any) => {
+  const getTimeAgo = (timestamp: { seconds: number; nanoseconds: number; toMillis?: () => number } | Date | number | null) => {
     if (!timestamp) return 'Recently';
     const now = Date.now();
-    const time = timestamp.toMillis?.() || timestamp;
+    let time: number;
+    if (typeof timestamp === 'number') {
+      time = timestamp;
+    } else if (timestamp instanceof Date) {
+      time = timestamp.getTime();
+    } else if ('toMillis' in timestamp && typeof timestamp.toMillis === 'function') {
+      time = timestamp.toMillis();
+    } else if ('seconds' in timestamp) {
+      time = timestamp.seconds * 1000;
+    } else {
+      return 'Recently';
+    }
     const diff = now - time;
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
@@ -416,10 +428,12 @@ export default function Header() {
                 <p className="text-xs text-gray-500 dark:text-gray-400">Administrator</p>
               </div>
               {userProfile.photoURL ? (
-                <img
+                <Image
                   src={userProfile.photoURL}
                   alt={userProfile.displayName}
-                  className="w-10 h-10 rounded-full object-cover"
+                  width={40}
+                  height={40}
+                  className="rounded-full object-cover"
                 />
               ) : (
                 <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold">
@@ -443,10 +457,12 @@ export default function Header() {
                   <div className="px-4 py-4 bg-gray-100 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
                     <div className="flex items-center gap-3">
                       {userProfile.photoURL ? (
-                        <img
+                        <Image
                           src={userProfile.photoURL}
                           alt={userProfile.displayName}
-                          className="w-12 h-12 rounded-full object-cover"
+                          width={48}
+                          height={48}
+                          className="rounded-full object-cover"
                         />
                       ) : (
                         <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold">

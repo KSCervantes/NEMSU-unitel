@@ -1,8 +1,8 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, useCallback } from 'react';
 import Swal from 'sweetalert2';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -13,8 +13,8 @@ import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addD
 import { sanitizeHtml, sanitizeText } from '@/lib/sanitize';
 import { logError } from '@/lib/logger';
 import { getEnhancedErrorMessage } from '@/lib/errorMessages';
-import EmptyState from '@/app/components/EmptyState';
-import { useFocusTrap } from '@/app/hooks/useFocusTrap';
+import { } from '@/app/components/EmptyState';
+import { } from '@/app/hooks/useFocusTrap';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
 import { initCSRF, getCSRFToken } from '@/lib/csrf';
 import ModalWithFocusTrap from '@/app/components/ModalWithFocusTrap';
@@ -78,8 +78,7 @@ interface Booking {
 }
 
 export default function Reservations() {
-  const router = useRouter();
-  const { isAuthenticated, isLoading } = useProtectedAdminPage();
+  const { isAuthenticated } = useProtectedAdminPage();
 
   // Enable keyboard navigation
   useKeyboardNavigation();
@@ -362,10 +361,10 @@ export default function Reservations() {
     } else {
       setRange(undefined);
     }
-  }, [isModalOpen]);
+  }, [isModalOpen, formData.checkIn, formData.checkOut]);
 
   // Real-time conflict detection for form
-  const checkFormConflicts = (room: string, checkInStr: string, checkOutStr: string) => {
+  const checkFormConflicts = useCallback((room: string, checkInStr: string, checkOutStr: string) => {
     if (!room || !checkInStr || !checkOutStr) {
       setConflictStatus({ hasConflict: false, type: null, message: '' });
       return;
@@ -413,12 +412,12 @@ export default function Reservations() {
       type: null,
       message: '✅ Dates are available for this room'
     });
-  };
+  }, [bookedByRoom, maintenanceByRoom, editingBooking?.id]);
 
   // Trigger conflict check whenever form data changes
   useEffect(() => {
     checkFormConflicts(formData.room || '', formData.checkIn || '', formData.checkOut || '');
-  }, [formData.room, formData.checkIn, formData.checkOut, editingBooking?.id]);
+  }, [formData.room, formData.checkIn, formData.checkOut, editingBooking?.id, checkFormConflicts]);
 
   const updateBookingStatus = async (bookingId: string, newStatus: 'pending' | 'confirmed' | 'cancelled' | 'completed') => {
     try {
@@ -884,7 +883,8 @@ export default function Reservations() {
     }
   };
 
-  const filteredBookings = (filter === 'all' ? bookings : bookings.filter(b => b.status === filter))
+  // Exclude completed bookings from the main reservations view
+  const filteredBookings = (filter === 'all' ? bookings.filter(b => b.status !== 'completed') : bookings.filter(b => b.status === filter && b.status !== 'completed'))
     .filter((b) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.trim().toLowerCase();

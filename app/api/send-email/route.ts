@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { checkRateLimit, getClientIdentifier } from '@/lib/rateLimit';
 import { verifyAdminAuth } from '@/lib/middleware/auth';
-import { sanitizeHtml } from '@/lib/sanitize';
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,11 +31,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify authentication (optional - can be made required)
-    const authResult = await verifyAdminAuth(req);
+    await verifyAdminAuth(req);
     // Note: For now, we allow unauthenticated requests but log them
     // In production, you may want to require authentication
 
-    const { to, subject, html, type } = await req.json();
+    const { to, subject, html } = await req.json();
 
     // Validate input
     if (!to || !subject || !html) {
@@ -58,6 +57,14 @@ export async function POST(req: NextRequest) {
     // Note: We don't sanitize HTML for email templates as they are server-generated
     // and trusted. Only sanitize if the HTML contains user-generated content.
     // For email templates from emailTemplates.ts, use them as-is.
+
+    // Validate required environment variables
+    if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+      return NextResponse.json(
+        { error: 'Email service not configured' },
+        { status: 503 }
+      );
+    }
 
     // Create transporter using Gmail
     const transporter = nodemailer.createTransport({
@@ -87,13 +94,13 @@ export async function POST(req: NextRequest) {
         'X-RateLimit-Reset': rateLimitResult.resetTime.toString(),
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Log error (in production, send to error tracking service)
     if (process.env.NODE_ENV === 'development') {
     console.error('Email sending error:', error);
     }
     return NextResponse.json(
-      { error: 'Failed to send email', details: error.message },
+      { error: 'Failed to send email', details: error instanceof Error ? error.message : 'unknown error' },
       { status: 500 }
     );
   }

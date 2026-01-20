@@ -38,6 +38,7 @@ export default function ModalWithFocusTrap({
         ref={modalRef}
         className="bg-white dark:bg-gray-800 rounded-lg shadow-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto"
       >
+        <h2 id="modal-title" className="sr-only">{title}</h2>
         {children}
       </div>
     </div>

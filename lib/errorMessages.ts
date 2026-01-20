@@ -13,16 +13,17 @@ export interface ErrorDetails {
 /**
  * Get enhanced error message based on error type
  */
-export function getEnhancedErrorMessage(error: any): ErrorDetails {
+export function getEnhancedErrorMessage(error: unknown): ErrorDetails {
+  const err = error as { code?: string; message?: string };
   // Firebase errors
-  if (error?.code) {
-    switch (error.code) {
+  if (err?.code) {
+    switch (err.code) {
       case 'auth/invalid-email':
         return {
           title: 'Invalid Email Address',
           message: 'The email address you entered is not valid. Please check and try again.',
           action: 'Verify your email format (e.g., user@example.com)',
-          code: error.code,
+          code: err.code,
         };
       
       case 'auth/user-not-found':
@@ -30,7 +31,7 @@ export function getEnhancedErrorMessage(error: any): ErrorDetails {
           title: 'Account Not Found',
           message: 'No account exists with this email address.',
           action: 'Check your email or create a new account',
-          code: error.code,
+          code: err.code,
         };
       
       case 'auth/wrong-password':
@@ -39,7 +40,7 @@ export function getEnhancedErrorMessage(error: any): ErrorDetails {
           title: 'Incorrect Password',
           message: 'The password you entered is incorrect.',
           action: 'Try again or use "Forgot Password" to reset',
-          code: error.code,
+          code: err.code,
         };
       
       case 'auth/too-many-requests':
@@ -47,7 +48,7 @@ export function getEnhancedErrorMessage(error: any): ErrorDetails {
           title: 'Too Many Attempts',
           message: 'Too many failed login attempts. Please try again later.',
           action: 'Wait a few minutes before trying again',
-          code: error.code,
+          code: err.code,
         };
       
       case 'permission-denied':
@@ -55,7 +56,7 @@ export function getEnhancedErrorMessage(error: any): ErrorDetails {
           title: 'Permission Denied',
           message: 'You do not have permission to perform this action.',
           action: 'Contact your administrator if you believe this is an error',
-          code: error.code,
+          code: err.code,
         };
       
       case 'unavailable':
@@ -63,7 +64,7 @@ export function getEnhancedErrorMessage(error: any): ErrorDetails {
           title: 'Service Unavailable',
           message: 'The service is temporarily unavailable. Please try again later.',
           action: 'Check your internet connection and try again in a moment',
-          code: error.code,
+          code: err.code,
         };
       
       case 'deadline-exceeded':
@@ -71,13 +72,13 @@ export function getEnhancedErrorMessage(error: any): ErrorDetails {
           title: 'Request Timeout',
           message: 'The request took too long to complete.',
           action: 'Check your internet connection and try again',
-          code: error.code,
+          code: err.code,
         };
     }
   }
 
   // Network errors
-  if (error?.message?.includes('network') || error?.message?.includes('fetch')) {
+  if (err?.message?.includes('network') || err?.message?.includes('fetch')) {
     return {
       title: 'Network Error',
       message: 'Unable to connect to the server. Please check your internet connection.',
@@ -86,10 +87,10 @@ export function getEnhancedErrorMessage(error: any): ErrorDetails {
   }
 
   // Validation errors
-  if (error?.message?.includes('validation') || error?.message?.includes('required')) {
+  if (err?.message?.includes('validation') || err?.message?.includes('required')) {
     return {
       title: 'Validation Error',
-      message: error.message || 'Please fill in all required fields correctly.',
+      message: err.message || 'Please fill in all required fields correctly.',
       action: 'Review the form and correct any highlighted errors',
     };
   }
@@ -97,7 +98,7 @@ export function getEnhancedErrorMessage(error: any): ErrorDetails {
   // Generic error
   return {
     title: 'An Error Occurred',
-    message: error?.message || 'Something went wrong. Please try again.',
+    message: err?.message || 'Something went wrong. Please try again.',
     action: 'If the problem persists, contact support',
   };
 }
@@ -105,7 +106,7 @@ export function getEnhancedErrorMessage(error: any): ErrorDetails {
 /**
  * Format error for display in UI
  */
-export function formatErrorForDisplay(error: any): string {
+export function formatErrorForDisplay(error: unknown): string {
   const errorDetails = getEnhancedErrorMessage(error);
   return errorDetails.message;
 }

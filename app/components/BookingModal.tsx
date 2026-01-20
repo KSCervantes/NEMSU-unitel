@@ -1,7 +1,7 @@
 "use client";
 export const dynamic = "force-dynamic";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Swal from 'sweetalert2';
 import { DayPicker } from 'react-day-picker';
 import type { DateRange } from 'react-day-picker';
@@ -133,10 +133,11 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
   // Subscribe to bookings in real time to block overlapping dates
   useEffect(() => {
     if (!isOpen) return;
+    type BookingSnapshot = { room?: string; checkIn?: string; checkOut?: string; status?: string };
     const unsub = onSnapshot(collection(db, 'bookings'), (snap) => {
       const map: Record<string, { start: number; end: number }[]> = {};
       snap.forEach((doc) => {
-        const d = doc.data() as any;
+        const d = doc.data() as BookingSnapshot;
         if (!d?.room || !d?.checkIn || !d?.checkOut) return;
         // Only block confirmed bookings - pending bookings don't affect room availability
         if (d.status === 'confirmed') {
@@ -156,10 +157,11 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
   useEffect(() => {
     if (!isOpen) return;
     const q = query(collection(db, 'maintenance'), where('status', 'in', ['pending', 'in-progress']));
+    type MaintenanceSnapshot = { room?: string; start?: string; end?: string; dueDate?: string; status?: string };
     const unsub = onSnapshot(q, (snap) => {
       const map: Record<string, { start: number; end: number }[]> = {};
       snap.forEach((doc) => {
-        const d = doc.data() as any;
+        const d = doc.data() as MaintenanceSnapshot;
         if (!d?.room) return;
 
         let start: number;
@@ -191,7 +193,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     return () => unsub();
   }, [isOpen]);
 
-  const rangeOverlaps = (roomName: string, startIso?: string, endIso?: string) => {
+  const rangeOverlaps = useCallback((roomName: string, startIso?: string, endIso?: string) => {
     if (!roomName || !startIso || !endIso) return false;
     const start = new Date(startIso).getTime();
     const end = new Date(endIso).getTime();
@@ -199,7 +201,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     const ranges = bookedByRoom[roomName] || [];
     // Treat checkout as exclusive; overlap if [start, end) intersects any existing [r.start, r.end)
     return ranges.some(r => start < r.end && end > r.start);
-  };
+  }, [bookedByRoom]);
 
   // Validate date selection against existing bookings
   useEffect(() => {
@@ -224,7 +226,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     } else {
       setMaintenanceConflict(null);
     }
-  }, [formData.room, formData.checkIn, formData.checkOut, bookedByRoom, maintenanceByRoom]);
+  }, [formData.room, formData.checkIn, formData.checkOut, bookedByRoom, maintenanceByRoom, rangeOverlaps]);
 
   // Update form dates when the day picker range changes; checkout is exclusive
   useEffect(() => {
@@ -260,7 +262,6 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
   };
 
   // Get selected room data from fetched rooms
-  const selectedRoomObj = formData.room ? rooms.find(r => r.name === formData.room) : null;
   const selectedRoomData = formData.room ? getRoomData(formData.room) : null;
 
   // Calculate nights and total price
@@ -392,6 +393,17 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
       }
       const start = new Date(formData.checkIn).getTime();
       const end = new Date(formData.checkOut).getTime();
+      // Basic date validation: checkout must be after check-in
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Invalid Dates',
+          text: 'Check-out date/time must be after check-in.',
+          confirmButtonColor: '#f59e0b'
+        });
+        setLoading(false);
+        return;
+      }
       const maintRanges = maintenanceByRoom[formData.room] || [];
       const overlapsMaintenance = maintRanges.some(r => start < r.end && end > r.start);
       if (overlapsMaintenance) {
@@ -418,6 +430,18 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
 
       const nights = Math.max(1, Math.ceil((new Date(formData.checkOut).getTime() - new Date(formData.checkIn).getTime()) / (1000 * 60 * 60 * 24)));
       const guests = parseInt(formData.guests) || 1;
+
+      // Dorm room policy: disable availability if guests exceed 6
+      if (roomInfo.perBed && guests > 6) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Guest Limit Exceeded',
+          text: 'Dorm rooms are not available for more than 6 guests. Please reduce the number of guests or choose another room.',
+          confirmButtonColor: '#f59e0b'
+        });
+        setLoading(false);
+        return;
+      }
 
       let basePrice = 0;
       let extraFee = 0;
@@ -1002,19 +1026,24 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                 {!selectedRoomData ? (
                   <option value="">Select a room first</option>
                 ) : (
-                  Array.from({ length: selectedRoomData.maxGuests }, (_, i) => i + 1).map((num) => (
+                  Array.from({ length: selectedRoomData.perBed ? Math.min(selectedRoomData.maxGuests, 6) : selectedRoomData.maxGuests }, (_, i) => i + 1).map((num) => (
                     <option key={num} value={num.toString()}>
                       {num} {num === 1 ? 'Guest' : 'Guests'}
                     </option>
                   )).concat(
-                    selectedRoomData.maxGuests < 10 ? (
-                      <option key="more" value={(selectedRoomData.maxGuests + 1).toString()}>
-                        {selectedRoomData.maxGuests + 1}+ Guests (Extra fee applies)
-                      </option>
-                    ) : []
+                    selectedRoomData.perBed
+                      ? []
+                      : (selectedRoomData.maxGuests < 10 ? (
+                          <option key="more" value={(selectedRoomData.maxGuests + 1).toString()}>
+                            {selectedRoomData.maxGuests + 1}+ Guests (Extra fee applies)
+                          </option>
+                        ) : [])
                   )
                 )}
               </select>
+              {selectedRoomData?.perBed && (
+                <p className="mt-1 text-xs text-gray-500">Dorm rooms support up to 6 guests. Larger groups are not available.</p>
+              )}
             </div>
           </div>
 

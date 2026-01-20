@@ -8,7 +8,7 @@ import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, get
 
 interface Maintenance {
   id: string;
-  status: 'pending' | 'in-progress' | 'completed';
+  status?: 'pending' | 'in-progress' | 'completed';
   room?: string;
   roomSlug?: string;
   start?: string;
@@ -36,7 +36,7 @@ export default function RoomMaintenancePage() {
         const roomRef = doc(db, 'rooms', slug);
         const snap = await getDoc(roomRef);
         if (snap.exists()) {
-          const data = snap.data() as any;
+          const data = snap.data() as { name?: string };
           if (data?.name) setRoomNameFromDoc(data.name);
         }
       } catch {}
@@ -45,8 +45,10 @@ export default function RoomMaintenancePage() {
       const qBySlug = query(collection(db, 'maintenance'), where('roomSlug', '==', slug));
       const qByName = query(collection(db, 'maintenance'), where('room', '==', displayName));
 
-      const applySnap = (snap: any) => {
-        snap.forEach((doc: any) => rowsMap.set(doc.id, { id: doc.id, ...doc.data() }));
+      type MaintenanceDoc = Partial<Omit<Maintenance, 'id'>> & { id?: string };
+
+      const applySnap = (snap: { forEach: (cb: (doc: { id: string; data: () => MaintenanceDoc }) => void) => void }) => {
+        snap.forEach((doc) => rowsMap.set(doc.id, { id: doc.id, ...doc.data() }));
         setItems(Array.from(rowsMap.values()));
       };
 

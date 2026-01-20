@@ -2,13 +2,12 @@
 export const dynamic = "force-dynamic";
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, where } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import EmptyState from '@/app/components/EmptyState';
 import LoadingSpinner from '@/app/components/LoadingSpinner';
 
@@ -23,12 +22,11 @@ interface Booking {
   checkOut: string;
   guests: string;
   status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
-  createdAt: any;
+  createdAt: { seconds: number; nanoseconds: number } | Date;
 }
 
 export default function Completed() {
-  const router = useRouter();
-  const { isAuthenticated, isLoading } = useProtectedAdminPage();
+  const { isAuthenticated } = useProtectedAdminPage();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'checkins' | 'checkouts' | 'cancelled' | 'completed'>('checkins');
@@ -121,7 +119,7 @@ export default function Completed() {
         {/* Stats Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Today's Check-ins</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Today&apos;s Check-ins</p>
             <p className="text-3xl font-semibold text-gray-900 dark:text-white">{checkIns.length}</p>
             <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Guests arriving today</p>
           </div>

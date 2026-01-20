@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Poppins } from "next/font/google";
 import "./globals.css";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ErrorMonitoringProvider } from "./components/ErrorMonitoringProvider";
 import SkipLinks from "./components/SkipLinks";
 
 const inter = Inter({
@@ -21,6 +22,14 @@ export const metadata: Metadata = {
   title: "UNITEL - NEMSU University Hotel | Book Your Stay",
   description: "Experience comfort at UNITEL NEMSU University Hotel. Modern rooms, excellent service, and convenient location in Lianga, Surigao del Sur. Book now!",
   keywords: ["unitel hotel", "nemsu hotel", "lianga hotel", "university hotel", "surigao del sur"],
+  icons: {
+    icon: [
+      {
+        url: "/img/NEMSU_LOGOO.webp",
+        type: "image/webp",
+      },
+    ],
+  },
 };
 
 export default function RootLayout({
@@ -33,12 +42,14 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${poppins.variable} antialiased`}
       >
-        <SkipLinks />
-        <ErrorBoundary>
-          <main id="main-content">
-            {children}
-          </main>
-        </ErrorBoundary>
+        <ErrorMonitoringProvider>
+          <SkipLinks />
+          <ErrorBoundary>
+            <main id="main-content">
+              {children}
+            </main>
+          </ErrorBoundary>
+        </ErrorMonitoringProvider>
       </body>
     </html>
   );

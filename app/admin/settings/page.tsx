@@ -2,7 +2,6 @@
 export const dynamic = "force-dynamic";
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Swal from 'sweetalert2';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import Sidebar from '../components/Sidebar';
@@ -11,7 +10,6 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 export default function Settings() {
-  const router = useRouter();
   const { isAuthenticated, isLoading } = useProtectedAdminPage();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -55,7 +53,7 @@ export default function Settings() {
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setSettings(prev => ({ ...prev, [name]: value }));
   };
@@ -309,7 +307,7 @@ export default function Settings() {
                 <select
                   name="currency"
                   value={settings.currency}
-                  onChange={(e) => handleChange(e as any)}
+                  onChange={handleChange}
                   className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
                 >
                   <option value="PHP">PHP - Philippine Peso</option>

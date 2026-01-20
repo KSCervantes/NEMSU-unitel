@@ -1,8 +1,7 @@
 "use client";
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, useCallback } from 'react';
 import Swal from 'sweetalert2';
 import Image from 'next/image';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
@@ -13,7 +12,6 @@ import { useRouter as useNextRouter } from 'next/navigation';
 import { db, storage } from '@/lib/firebase';
 import { collection, query, where, getDocs, doc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
-import { updateRoomImagesToStorageUrls } from '@/lib/utils/updateRoomImages';
 import EmptyState from '@/app/components/EmptyState';
 import LoadingSpinner from '@/app/components/LoadingSpinner';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
@@ -34,8 +32,16 @@ interface RoomStatus {
   underMaintenance: boolean;
 }
 
+type RoomPayload = {
+  name: string;
+  price: string;
+  description: string;
+  maxGuests: number;
+  perBed?: string;
+  image?: string;
+};
+
 export default function RoomManagement() {
-  const router = useRouter();
   const nextRouter = useNextRouter();
   const { isAuthenticated, isLoading } = useProtectedAdminPage();
 
@@ -51,11 +57,44 @@ export default function RoomManagement() {
   const [editingRoom, setEditingRoom] = useState<{ id?: string; name: string; price: string; description: string; perBed?: string; maxGuests?: number; image?: string; imageFile?: File | null } | null>(null);
   const [showDebug, setShowDebug] = useState(false);
 
+  const fetchRooms = useCallback(async () => {
+    try {
+      const roomsRef = collection(db, 'rooms');
+      const snapshot = await getDocs(roomsRef);
+
+      if (snapshot.empty) {
+        setRoomTypes([]);
+      } else {
+        const rooms: RoomType[] = [];
+        snapshot.forEach((doc) => {
+          rooms.push({ id: doc.id, ...doc.data() } as RoomType);
+        });
+        const unique = Array.from(
+          new Map(rooms.map((r) => [r.name, r])).values()
+        );
+        setRoomTypes(unique);
+      }
+    } catch (error) {
+      logError('Error fetching rooms:', error);
+    }
+  }, []);
+
+  const initializeRooms = useCallback(async () => {
+    try {
+      setLoading(true);
+      await fetchRooms();
+    } catch (error) {
+      logError('Error initializing rooms:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchRooms]);
+
   useEffect(() => {
     if (isAuthenticated && !isLoading) {
       initializeRooms();
     }
-  }, [isAuthenticated, isLoading]);
+  }, [isAuthenticated, isLoading, initializeRooms]);
 
   // Set up room status listeners after roomTypes are loaded
   useEffect(() => {
@@ -67,47 +106,13 @@ export default function RoomManagement() {
         }
       };
     }
-  }, [roomTypes]);
+  }, [roomTypes, fetchRoomStatus]);
 
-  const initializeRooms = async () => {
-    try {
-      setLoading(true);
-      await fetchRooms();
-    } catch (error) {
-      logError('Error initializing rooms:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchRooms = async () => {
-    try {
-      const roomsRef = collection(db, 'rooms');
-      const snapshot = await getDocs(roomsRef);
-
-      if (snapshot.empty) {
-        // Rooms collection is empty - admin should add rooms manually
-        // No automatic initialization
-        setRoomTypes([]);
-      } else {
-        const rooms: RoomType[] = [];
-        snapshot.forEach((doc) => {
-          rooms.push({ id: doc.id, ...doc.data() } as RoomType);
-        });
-        // Deduplicate by name
-        const unique = Array.from(
-          new Map(rooms.map((r) => [r.name, r])).values()
-        );
-        setRoomTypes(unique);
-      }
-    } catch (error) {
-      logError('Error fetching rooms:', error);
-    }
-  };
-
-  const fetchRoomStatus = () => {
+  const fetchRoomStatus = useCallback(() => {
     try {
       const bookingsRef = collection(db, 'bookings');
+      // Limit listener to active bookings for performance
+      const activeBookingsQueryRef = query(bookingsRef, where('status', 'in', ['confirmed', 'in-progress']));
       const maintenanceRef = collection(db, 'maintenance');
 
       const today = new Date();
@@ -119,25 +124,11 @@ export default function RoomManagement() {
         // Track maintenance by both display name and slug
         const maintenanceRooms = new Set<string>();
         snapshot.forEach((doc) => {
-          const data = doc.data() as any;
-          // Debug log (development only)
-          if (process.env.NODE_ENV === 'development') {
-            console.log('🔧 Maintenance Task:', {
-              id: doc.id,
-              room: data.room,
-              roomSlug: data.roomSlug,
-              status: data.status,
-              title: data.title
-            });
-          }
+          const data = doc.data();
           const nameOrSlug: string | undefined = data.roomSlug || data.room;
           if (!nameOrSlug) return;
           maintenanceRooms.add(String(nameOrSlug));
         });
-        // Debug log (development only)
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔧 Rooms under maintenance:', Array.from(maintenanceRooms));
-        }
 
         setRoomStatus((prev) => {
           const next: { [key: string]: RoomStatus } = {};
@@ -146,10 +137,6 @@ export default function RoomManagement() {
             const isUnder = maintenanceRooms.has(room.name) ||
               maintenanceRooms.has(nameBasedSlug) ||
               maintenanceRooms.has(room.id || '');
-            // Debug log (development only)
-            if (process.env.NODE_ENV === 'development') {
-              console.log(`🔧 ${room.name}: checking "${room.name}", "${nameBasedSlug}", "${room.id}" = ${isUnder}`);
-            }
             next[room.name] = {
               activeBookings: prev[room.name]?.activeBookings || 0,
               underMaintenance: isUnder,
@@ -160,16 +147,15 @@ export default function RoomManagement() {
       }, (error) => logError('Maintenance listener error:', error));
 
       // Real-time bookings listener
-      const unsubscribeBookings = onSnapshot(bookingsRef, (snapshot) => {
-        const bookingCountsByName: { [key: string]: number } = {};
-        const bookingCountsBySlug: { [key: string]: number } = {};
+      // Only count active bookings that are confirmed or in-progress (exclude completed bookings)
+      const unsubscribeBookings = onSnapshot(activeBookingsQueryRef, (snapshot) => {
+        const bookingsByRoom: { [key: string]: Set<string> } = {}; // Use Set to avoid double counting by booking ID
 
         snapshot.forEach((doc) => {
-          const data = doc.data() as any;
+          const data = doc.data();
           if (!data) return;
 
-          const statusOk = data.status === 'confirmed' || data.status === 'in-progress';
-          if (!statusOk) return;
+          // Status already filtered by query
 
           const checkIn = new Date(data.checkIn);
           const checkOut = new Date(data.checkOut);
@@ -186,22 +172,30 @@ export default function RoomManagement() {
 
           const name = data.room as string | undefined;
           const slug = data.roomSlug as string | undefined;
+          const bookingId = doc.id;
 
+          // Add to both name and slug if available, but use booking ID to prevent duplicates
           if (name && typeof name === 'string') {
-            bookingCountsByName[name] = (bookingCountsByName[name] || 0) + 1;
+            if (!bookingsByRoom[name]) {
+              bookingsByRoom[name] = new Set();
+            }
+            bookingsByRoom[name].add(bookingId);
           }
           if (slug && typeof slug === 'string') {
-            bookingCountsBySlug[slug] = (bookingCountsBySlug[slug] || 0) + 1;
+            if (!bookingsByRoom[slug]) {
+              bookingsByRoom[slug] = new Set();
+            }
+            bookingsByRoom[slug].add(bookingId);
           }
         });
 
         setRoomStatus((prev) => {
           const next: { [key: string]: RoomStatus } = {};
           roomTypes.forEach((room) => {
-            const roomSlug = room.id || room.name.toLowerCase().trim().replace(/\s+/g, '-');
-            const countByName = bookingCountsByName[room.name] || 0;
-            const countBySlug = bookingCountsBySlug[roomSlug] || 0;
-            const count = countByName + countBySlug;
+            const countByName = bookingsByRoom[room.name]?.size || 0;
+            const countBySlug = room.id ? (bookingsByRoom[room.id]?.size || 0) : 0;
+            // Use the maximum of the two counts (they should be the same if booking is found either way)
+            const count = Math.max(countByName, countBySlug);
 
             next[room.name] = {
               activeBookings: count,
@@ -220,28 +214,9 @@ export default function RoomManagement() {
     } catch (error) {
       logError('Error fetching room status:', error);
     }
-  };
+  }, [roomTypes]);
 
-  const getTotalAvailable = () => {
-    return roomTypes.filter(room => {
-      const status = roomStatus[room.name];
-      return status && !status.underMaintenance && status.activeBookings === 0;
-    }).length;
-  };
-
-  const getTotalOccupied = () => {
-    return roomTypes.filter(room => {
-      const status = roomStatus[room.name];
-      return status && status.activeBookings > 0;
-    }).length;
-  };
-
-  const getTotalMaintenance = () => {
-    return roomTypes.filter(room => {
-      const status = roomStatus[room.name];
-      return status && status.underMaintenance;
-    }).length;
-  };
+  // Removed unused aggregate helpers to satisfy lint
 
   const getRoomStatusBadge = (roomName: string) => {
     const status = roomStatus[roomName];
@@ -468,14 +443,15 @@ export default function RoomManagement() {
                       const storageRef = ref(storage, `rooms/${fileName}`);
                       await uploadBytes(storageRef, newRoom.imageFile);
                       imageUrl = await getDownloadURL(storageRef);
-                    } catch (uploadErr: any) {
+                    } catch (uploadErr: unknown) {
                       logError('Storage upload failed:', uploadErr);
-                      uploadWarning = `Image upload failed (${uploadErr?.code || 'network error'}). Room saved with placeholder image. You can edit later to add an image.`;
+                      const uploadCode = uploadErr && typeof uploadErr === 'object' && 'code' in uploadErr ? String((uploadErr as { code?: unknown }).code) : 'network error';
+                      uploadWarning = `Image upload failed (${uploadCode}). Room saved with placeholder image. You can edit later to add an image.`;
                       imageUrl = '';
                     }
                   }
 
-                  const payload: any = {
+                  const payload: RoomPayload = {
                     name: newRoom.name,
                     price: newRoom.price,
                     description: newRoom.description,
@@ -603,7 +579,7 @@ export default function RoomManagement() {
                   await uploadBytes(storageRef, editingRoom.imageFile);
                   imageUrl = await getDownloadURL(storageRef);
                 }
-                const payload: any = {
+                const payload: RoomPayload = {
                   name: editingRoom.name,
                   price: editingRoom.price,
                   description: editingRoom.description,
@@ -665,7 +641,7 @@ export default function RoomManagement() {
                 {editingRoom.image && (
                   <div className="mt-2">
                     <p className="text-xs text-gray-500 mb-1">Current image:</p>
-                    <img src={editingRoom.image} alt={editingRoom.name} className="w-32 h-32 object-cover rounded border" />
+                    <Image src={editingRoom.image} alt={editingRoom.name} width={128} height={128} className="object-cover rounded border" />
                   </div>
                 )}
               </div>

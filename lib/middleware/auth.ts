@@ -4,7 +4,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/firebase';
 import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
 
 /**
@@ -41,8 +40,6 @@ export async function verifyAdminAuth(request: NextRequest): Promise<{
         error: 'Missing or invalid authorization header',
       };
     }
-
-    const token = authHeader.substring(7);
 
     // Verify Firebase ID token
     // Note: This requires Firebase Admin SDK on the server

@@ -98,8 +98,10 @@ export function useProtectedAdminPage() {
       status: 'success',
     });
 
-    setIsAuthenticated(true);
-    setIsLoading(false);
+    queueMicrotask(() => {
+      setIsAuthenticated(true);
+      setIsLoading(false);
+    });
   }, [router]);
 
   return { isAuthenticated, isLoading };
