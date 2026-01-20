@@ -35,10 +35,10 @@ export function storeCSRFToken(token: string): void {
  */
 export function getCSRFToken(): string | null {
   if (typeof window === 'undefined') return null;
-  
+
   const token = sessionStorage.getItem('csrf_token');
   const tokenTime = sessionStorage.getItem('csrf_token_time');
-  
+
   // Token expires after 1 hour
   if (token && tokenTime) {
     const age = Date.now() - parseInt(tokenTime, 10);
@@ -49,7 +49,7 @@ export function getCSRFToken(): string | null {
     sessionStorage.removeItem('csrf_token');
     sessionStorage.removeItem('csrf_token_time');
   }
-  
+
   return null;
 }
 
@@ -73,4 +73,3 @@ export function initCSRF(): string {
   }
   return token;
 }
-

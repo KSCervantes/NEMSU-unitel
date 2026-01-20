@@ -1,6 +1,6 @@
 /**
  * Production Error Monitoring
- * 
+ *
  * This module provides error tracking and monitoring for production environments.
  * You can integrate with services like Sentry, LogRocket, or other monitoring tools.
  */
@@ -40,15 +40,15 @@ export function reportError(error: Error, additionalData?: Record<string, unknow
   if (process.env.NODE_ENV === 'production') {
     // TODO: Integrate with your preferred error monitoring service
     // Example integrations:
-    
+
     // Sentry:
     // import * as Sentry from '@sentry/nextjs';
     // Sentry.captureException(error, { extra: additionalData });
-    
+
     // LogRocket:
     // import LogRocket from 'logrocket';
     // LogRocket.captureException(error, { extra: additionalData });
-    
+
     // Custom API endpoint:
     // fetch('/api/log-error', {
     //   method: 'POST',
@@ -77,7 +77,7 @@ export function setupErrorMonitoring(): void {
   window.addEventListener('error', (event) => {
     reportError(
       new Error(event.message),
-      { 
+      {
         type: 'globalError',
         filename: event.filename,
         lineno: event.lineno,
@@ -100,7 +100,7 @@ export function trackEvent(
   if (process.env.NODE_ENV === 'production') {
     // TODO: Integrate with analytics service
     // Example: Google Analytics, Mixpanel, etc.
-    
+
     // Google Analytics 4:
     // if (typeof window !== 'undefined' && (window as any).gtag) {
     //   (window as any).gtag('event', eventName, properties);
@@ -117,11 +117,11 @@ export function setUserContext(_userId: string, _userEmail?: string): void {
   void _userEmail;
   if (process.env.NODE_ENV === 'production') {
     // TODO: Set user context in monitoring service
-    
+
     // Sentry:
     // import * as Sentry from '@sentry/nextjs';
     // Sentry.setUser({ id: userId, email: userEmail });
-    
+
     // LogRocket:
     // import LogRocket from 'logrocket';
     // LogRocket.identify(userId, { email: userEmail });

@@ -65,7 +65,7 @@ export default function Completed() {
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  
+
   // Helper to safely parse date string to Date object (handles both ISO and local formats)
   const parseBookingDate = (dateStr: string | undefined): Date | null => {
     if (!dateStr) return null;
@@ -78,7 +78,7 @@ export default function Completed() {
       return null;
     }
   };
-  
+
   // Check-ins: Guests arriving today (check-in date is today)
   const checkIns = bookings.filter(b => {
     const checkInDate = parseBookingDate(b.checkIn);
@@ -98,7 +98,7 @@ export default function Completed() {
   // Past check-outs: Only show recent past check-outs (last 30 days) to avoid loading thousands of records
   const thirtyDaysAgo = new Date(today);
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  
+
   const pastCheckOuts = bookings.filter(b => {
     const checkOutDate = parseBookingDate(b.checkOut);
     if (!checkOutDate) return false;
@@ -108,7 +108,7 @@ export default function Completed() {
   });
 
   const cancelled = bookings.filter(b => b.status === 'cancelled');
-  
+
   // Completed: Bookings that have been marked as completed (checked out and finalized)
   const completed = bookings.filter(b => b.status === 'completed');
 
@@ -227,7 +227,7 @@ export default function Completed() {
               <EmptyState
                 title="No records found"
                 description={
-                  activeTab === 'checkins' 
+                  activeTab === 'checkins'
                     ? "No check-ins scheduled for today. Bookings with today's check-in date will appear here."
                     : activeTab === 'checkouts'
                     ? "No check-outs in the last 30 days. Guests who checked out recently will appear here."

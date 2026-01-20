@@ -555,7 +555,7 @@ export default function Calendar() {
                                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Room {booking.room} • {booking.guests || 1} guest(s)</p>
                                 </div>
                                 <span className="px-2 py-1 bg-blue-200 dark:bg-blue-900 text-blue-800 dark:text-blue-300 text-xs font-semibold rounded whitespace-nowrap ml-2">
-                                  Arriving
+                                  Check In
                                 </span>
                               </div>
 
@@ -644,7 +644,7 @@ export default function Calendar() {
                                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Room {booking.room} • {booking.guests || 1} guest(s)</p>
                                 </div>
                                 <span className="px-2 py-1 bg-orange-200 dark:bg-orange-900 text-orange-800 dark:text-orange-300 text-xs font-semibold rounded whitespace-nowrap ml-2">
-                                  Departing
+                                  Check Out
                                 </span>
                               </div>
 

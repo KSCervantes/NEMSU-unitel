@@ -25,7 +25,7 @@ export function getEnhancedErrorMessage(error: unknown): ErrorDetails {
           action: 'Verify your email format (e.g., user@example.com)',
           code: err.code,
         };
-      
+
       case 'auth/user-not-found':
         return {
           title: 'Account Not Found',
@@ -33,7 +33,7 @@ export function getEnhancedErrorMessage(error: unknown): ErrorDetails {
           action: 'Check your email or create a new account',
           code: err.code,
         };
-      
+
       case 'auth/wrong-password':
       case 'auth/invalid-credential':
         return {
@@ -42,7 +42,7 @@ export function getEnhancedErrorMessage(error: unknown): ErrorDetails {
           action: 'Try again or use "Forgot Password" to reset',
           code: err.code,
         };
-      
+
       case 'auth/too-many-requests':
         return {
           title: 'Too Many Attempts',
@@ -50,7 +50,7 @@ export function getEnhancedErrorMessage(error: unknown): ErrorDetails {
           action: 'Wait a few minutes before trying again',
           code: err.code,
         };
-      
+
       case 'permission-denied':
         return {
           title: 'Permission Denied',
@@ -58,7 +58,7 @@ export function getEnhancedErrorMessage(error: unknown): ErrorDetails {
           action: 'Contact your administrator if you believe this is an error',
           code: err.code,
         };
-      
+
       case 'unavailable':
         return {
           title: 'Service Unavailable',
@@ -66,7 +66,7 @@ export function getEnhancedErrorMessage(error: unknown): ErrorDetails {
           action: 'Check your internet connection and try again in a moment',
           code: err.code,
         };
-      
+
       case 'deadline-exceeded':
         return {
           title: 'Request Timeout',
@@ -110,4 +110,3 @@ export function formatErrorForDisplay(error: unknown): string {
   const errorDetails = getEnhancedErrorMessage(error);
   return errorDetails.message;
 }
-

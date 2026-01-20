@@ -42,4 +42,3 @@ export function logDebug(...args: unknown[]): void {
     console.debug('[DEBUG]', ...args);
   }
 }
-
