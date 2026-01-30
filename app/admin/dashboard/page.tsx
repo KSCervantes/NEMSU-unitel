@@ -45,9 +45,10 @@ interface MaintenanceTask {
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const adminEmail = typeof window !== 'undefined' ? sessionStorage.getItem('adminEmail') : null;
-  const hasAdminSession = typeof window !== 'undefined' && sessionStorage.getItem('adminAuth') === 'true';
-  const isAuthenticated = Boolean(hasAdminSession && adminEmail && isNemsuEmail(adminEmail) && isAuthorizedAdmin(adminEmail));
+  // IMPORTANT: Avoid reading sessionStorage during render (causes hydration mismatches).
+  // We resolve auth on the client after mount.
+  const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [maintenanceTasks, setMaintenanceTasks] = useState<MaintenanceTask[]>([]);
   const [totalRooms, setTotalRooms] = useState<number>(0);
@@ -57,13 +58,28 @@ export default function AdminDashboard() {
   const [renderNow] = useState(() => Date.now());
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      auth.signOut();
-      sessionStorage.removeItem('adminAuth');
-      sessionStorage.removeItem('adminEmail');
+    // Resolve auth after mount for consistent SSR/CSR HTML
+    try {
+      const email = sessionStorage.getItem('adminEmail');
+      const hasAdminSession = sessionStorage.getItem('adminAuth') === 'true';
+      const ok = Boolean(hasAdminSession && email && isNemsuEmail(email) && isAuthorizedAdmin(email));
+      setAdminEmail(email);
+      setAuthState(ok ? 'authenticated' : 'unauthenticated');
+      if (!ok) {
+        auth.signOut();
+        sessionStorage.removeItem('adminAuth');
+        sessionStorage.removeItem('adminEmail');
+        router.push('/admin');
+      }
+    } catch (e) {
+      logError('Error resolving admin session:', e);
+      setAuthState('unauthenticated');
       router.push('/admin');
-      return;
     }
+  }, [router]);
+
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
 
     const bookingsQuery = query(collection(db, 'bookings'), orderBy('createdAt', 'desc'));
     const unsubscribeBookings = onSnapshot(bookingsQuery, (snapshot) => {
@@ -142,9 +158,10 @@ export default function AdminDashboard() {
       unsubscribeBookings();
       unsubscribeMaintenance();
     };
-  }, [isAuthenticated, router]);
+  }, [authState]);
 
-  if (!isAuthenticated) {
+  // Keep the server + first client render identical to avoid hydration mismatch
+  if (authState !== 'authenticated') {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#1a3a52' }}>
         <div className="text-white text-xl">Loading...</div>

@@ -9,6 +9,7 @@ import RoomCard from "./components/RoomCard";
 import BookingModal from "./components/BookingModal";
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { logError } from '@/lib/logger';
 
 interface Room {
   id?: string;
@@ -49,7 +50,7 @@ export default function Home() {
         setRooms(unique);
       }
     } catch (error) {
-      console.error('Error fetching rooms:', error);
+      logError(error, { context: 'Home - Error fetching rooms' });
     }
   };
 
@@ -84,7 +85,7 @@ export default function Home() {
       });
       setRoomsUnderMaintenance(underMaintenance);
     }, (error) => {
-      console.error('Maintenance listener error:', error);
+      logError(error, { context: 'Home - Maintenance listener error' });
     });
 
     // Occupancy doc type not used while listener is noop
@@ -92,7 +93,7 @@ export default function Home() {
     const unsubscribeBookings = onSnapshot(bookingsRef, () => {
       // Occupancy tracking is currently unused in UI; skip processing
     }, (error) => {
-      console.error('Bookings listener error:', error);
+      logError(error, { context: 'Home - Bookings listener error' });
     });
 
     return () => {
@@ -119,13 +120,13 @@ export default function Home() {
       {/* Hero Section */}
       <section
         id="home"
-        className="relative min-h-screen flex items-center justify-center pt-0 pb-12 sm:pt-28 md:pt-32 lg:pt-0"
+        className="relative min-h-screen flex items-center justify-center pt-32 sm:pt-40 md:pt-48 pb-12"
         style={{ backgroundColor: '#112240' }}
       >
         {/* Galaxy background canvas, blended softly behind hero content */}
         <GalaxyBackground />
         {/* Subtle overlay to improve contrast */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0b1433]/40 via-transparent to-[#112240]/60" />
+      <div className="absolute inset-0 bg-linear-to-b from-[#0b1433]/40 via-transparent to-[#112240]/60" />
         <div className="relative z-10 text-center text-white px-4 sm:px-6 max-w-6xl mx-auto w-full">
           <div className="mb-6 sm:mb-8 md:mb-10 animate-fadeIn">
           </div>
@@ -319,7 +320,7 @@ export default function Home() {
                 </svg>
               </div>
               <h3 className="font-semibold text-sm sm:text-lg md:text-xl mb-2">Email</h3>
-              <p className="text-black text-xs sm:text-sm md:text-base break-all">jambautista@nemsu.edu.ph</p>
+              <p className="text-black text-xs sm:text-sm md:text-base break-all">hello@nemsu.edu.ph</p>
             </div>
 
             <div className="bg-white/10 backdrop-blur-sm rounded-xl sm:rounded-2xl p-4 sm:p-6 md:p-8 text-center hover:bg-white/20 transition-all">
@@ -329,7 +330,7 @@ export default function Home() {
                 </svg>
               </div>
               <h3 className="font-semibold text-sm sm:text-lg md:text-xl mb-2">Phone</h3>
-              <p className="text-black text-xs sm:text-sm md:text-base">+639105794330</p>
+              <p className="text-black text-xs sm:text-sm md:text-base">+639123456789</p>
             </div>
 
             <div className="col-span-2 md:col-span-1 bg-white/10 backdrop-blur-sm rounded-xl sm:rounded-2xl p-4 sm:p-6 md:p-8 text-center hover:bg-white/20 transition-all">

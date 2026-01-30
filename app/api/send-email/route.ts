@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { checkRateLimit, getClientIdentifier } from '@/lib/rateLimit';
 import { verifyAdminAuth } from '@/lib/middleware/auth';
+import { logError } from '@/lib/logger';
 
 export async function POST(req: NextRequest) {
   try {
@@ -96,9 +97,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: unknown) {
     // Log error (in production, send to error tracking service)
-    if (process.env.NODE_ENV === 'development') {
-    console.error('Email sending error:', error);
-    }
+    logError(error as Error, { context: 'Email sending error' });
     return NextResponse.json(
       { error: 'Failed to send email', details: error instanceof Error ? error.message : 'unknown error' },
       { status: 500 }

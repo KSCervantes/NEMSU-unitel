@@ -8,6 +8,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { logError } from '@/lib/logger';
 
 export default function Settings() {
   const { isAuthenticated, isLoading } = useProtectedAdminPage();
@@ -18,7 +19,7 @@ export default function Settings() {
     checkInTime: '15:00',
     checkOutTime: '11:00',
     currency: 'PHP',
-    contactEmail: 'jambautista@nemsu.edu.ph',
+    contactEmail: 'hello@nemsu.edu.ph',
     contactPhone: '+63 123 456 7890',
     address: 'NEMSU, Lianga, Philippines',
   });
@@ -47,7 +48,7 @@ export default function Settings() {
         });
       }
     } catch (error) {
-      console.error('Error loading settings:', error);
+      logError(error, { context: 'Settings - Error loading settings' });
     } finally {
       setLoading(false);
     }

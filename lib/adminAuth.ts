@@ -1,11 +1,11 @@
 /**
  * Authorized admin emails for the UNITEL Hotel Management System
- * 
+ *
  * IMPORTANT: This is a whitelist of authorized admin emails.
  * Only emails in this list can access the admin panel.
- * 
+ *
  * To add new admins, add their @nemsu.edu.ph email to this array.
- * 
+ *
  * Security Note: This file is safe to commit as it only contains
  * email addresses (not passwords or secrets). The actual authentication
  * is handled by Firebase Auth, and this list serves as an additional
@@ -13,7 +13,7 @@
  */
 export const AUTHORIZED_ADMIN_EMAILS = [
   'kscervantes@nemsu.edu.ph',
-  'jambautista@nemsu.edu.ph',
+  'hello@nemsu.edu.ph',
   'admin@nemsu.edu.ph',
   'staff@nemsu.edu.ph',
   'manager@nemsu.edu.ph',

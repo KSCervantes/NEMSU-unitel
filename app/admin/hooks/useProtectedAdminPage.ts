@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { auth } from '@/lib/firebase';
 import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
 import { logAdminActivity } from '@/lib/auditLog';
+import { logWarning } from '@/lib/logger';
 
 /**
  * Comprehensive auth hook for all admin sub-pages
@@ -58,7 +59,7 @@ export function useProtectedAdminPage() {
 
     // Level 3: NEMSU domain validation (@nemsu.edu.ph required)
     if (!isNemsuEmail(adminEmail)) {
-      console.warn(`[Security] Unauthorized access attempt: ${adminEmail} (invalid domain)`);
+      logWarning('[Security] Unauthorized access attempt:', adminEmail, '(invalid domain)');
       logAdminActivity({
         adminEmail,
         action: 'page_access_attempt',
@@ -75,7 +76,7 @@ export function useProtectedAdminPage() {
 
     // Level 4: Whitelist authorization check
     if (!isAuthorizedAdmin(adminEmail)) {
-      console.warn(`[Security] Unauthorized access attempt: ${adminEmail} (not in whitelist)`);
+      logWarning('[Security] Unauthorized access attempt:', adminEmail, '(not in whitelist)');
       logAdminActivity({
         adminEmail,
         action: 'page_access_attempt',

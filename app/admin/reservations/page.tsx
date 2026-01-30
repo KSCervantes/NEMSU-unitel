@@ -9,9 +9,9 @@ import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addDoc, serverTimestamp, getDocs, where } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addDoc, serverTimestamp, getDocs, where, writeBatch } from 'firebase/firestore';
 import { sanitizeHtml, sanitizeText } from '@/lib/sanitize';
-import { logError } from '@/lib/logger';
+import { logError, logInfo } from '@/lib/logger';
 import { getEnhancedErrorMessage } from '@/lib/errorMessages';
 import { } from '@/app/components/EmptyState';
 import { } from '@/app/hooks/useFocusTrap';
@@ -304,6 +304,68 @@ export default function Reservations() {
     };
   }, [isAuthenticated]);
 
+  // Auto-complete bookings that have passed checkout date
+  useEffect(() => {
+    if (!isAuthenticated || bookings.length === 0) return;
+
+    const autoCompleteExpiredBookings = async () => {
+      try {
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        const today = now.getTime();
+
+        // Find confirmed bookings where checkout date has passed
+        const expiredBookings = bookings.filter(booking => {
+          if (booking.status !== 'confirmed' || !booking.checkOut) return false;
+          const checkoutDate = new Date(booking.checkOut);
+          checkoutDate.setHours(0, 0, 0, 0);
+          const checkoutTime = checkoutDate.getTime();
+          // Checkout is exclusive, so mark as completed if today > checkout date
+          return today > checkoutTime;
+        });
+
+        if (expiredBookings.length === 0) return;
+
+        // Batch update expired bookings to completed status
+        const batch = writeBatch(db);
+        expiredBookings.forEach(booking => {
+          const bookingRef = doc(db, 'bookings', booking.id);
+          batch.update(bookingRef, {
+            status: 'completed',
+            completedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        });
+
+        await batch.commit();
+        logInfo(`Auto-completed ${expiredBookings.length} expired booking(s)`);
+        
+        // Show a subtle notification (optional - can be removed if too noisy)
+        if (expiredBookings.length > 0) {
+          Swal.fire({
+            icon: 'success',
+            title: 'Bookings Auto-Completed',
+            text: `${expiredBookings.length} booking(s) automatically marked as completed`,
+            toast: true,
+            position: 'top-end',
+            showConfirmButton: false,
+            timer: 3000
+          });
+        }
+      } catch (error) {
+        logError('Error auto-completing expired bookings:', error);
+      }
+    };
+
+    // Check immediately on first load, then periodically every 5 minutes
+    autoCompleteExpiredBookings();
+    const intervalId = setInterval(() => {
+      autoCompleteExpiredBookings();
+    }, 5 * 60 * 1000); // Check every 5 minutes
+
+    return () => clearInterval(intervalId);
+  }, [isAuthenticated, bookings]);
+
   // Fetch available rooms
   useEffect(() => {
     const fetchRooms = async () => {
@@ -341,27 +403,39 @@ export default function Reservations() {
     return [...toIntervals(r), ...toIntervals(m)];
   };
 
-  // Sync range with formData
+  // Sync range with formData (range is the single source of truth while the modal is open)
   useEffect(() => {
+    if (!isModalOpen) return;
     if (range?.from && range?.to) {
       const checkIn = range.from.toISOString().split('T')[0];
       const checkOut = range.to.toISOString().split('T')[0];
-      setFormData(prev => ({ ...prev, checkIn, checkOut }));
+      setFormData(prev => {
+        if (prev.checkIn === checkIn && prev.checkOut === checkOut) {
+          return prev;
+        }
+        return { ...prev, checkIn, checkOut };
+      });
     } else if (!range) {
-      setFormData(prev => ({ ...prev, checkIn: '', checkOut: '' }));
+      setFormData(prev => {
+        if (!prev.checkIn && !prev.checkOut) {
+          return prev;
+        }
+        return { ...prev, checkIn: '', checkOut: '' };
+      });
     }
-  }, [range]);
+  }, [range, isModalOpen]);
 
-  // Sync formData with range when editing
+  // When opening the modal for editing, initialize range from the existing booking once
   useEffect(() => {
-    if (formData.checkIn && formData.checkOut) {
-      const from = new Date(formData.checkIn);
-      const to = new Date(formData.checkOut);
+    if (!isModalOpen || !editingBooking) return;
+    if (editingBooking.checkIn && editingBooking.checkOut) {
+      const from = new Date(editingBooking.checkIn);
+      const to = new Date(editingBooking.checkOut);
       setRange({ from, to });
     } else {
       setRange(undefined);
     }
-  }, [isModalOpen, formData.checkIn, formData.checkOut]);
+  }, [isModalOpen, editingBooking]);
 
   // Real-time conflict detection for form
   const checkFormConflicts = useCallback((room: string, checkInStr: string, checkOutStr: string) => {

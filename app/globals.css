@@ -210,7 +210,8 @@ button, a, input, select, textarea {
   pointer-events: none;
 }
 
-/* Custom Book Now Button Style - High specificity to override all other styles */
+/* Custom Book Now / Primary CTA Button
+   High specificity so ALL main-page CTA buttons share one polished style */
 button.btn-book-now,
 .btn-book-now,
 button[class*="btn-book-now"],
@@ -219,20 +220,45 @@ button[class*="btn-book-now"],
 #rooms .btn-book-now,
 section button.btn-book-now,
 section .btn-book-now {
-  padding: 8px 18px !important;
-  border-radius: 10px !important;
+  position: relative !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.4rem !important;
+  padding: 0.7rem 1.6rem !important;
+  border-radius: 9999px !important;
   border: 0 !important;
-  background-color: var(--btn-book-now-bg) !important;
-  background: var(--btn-book-now-bg) !important;
+  background: radial-gradient(circle at 0% 0%, #fde68a, var(--btn-book-now-bg)) !important;
   letter-spacing: 1.5px !important;
-  font-size: 12px !important;
-  transition: all 0.3s ease !important;
-  box-shadow: var(--btn-book-now-shadow) 0px 10px 0px 0px !important;
+  font-size: 0.8rem !important;
+  text-transform: uppercase !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, filter 0.2s ease !important;
+  box-shadow:
+    0 14px 24px rgba(0, 0, 0, 0.18),
+    var(--btn-book-now-shadow) 0px 8px 0px 0px !important;
   color: var(--btn-book-now-text) !important;
   cursor: pointer !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   -webkit-appearance: none !important;
   appearance: none !important;
+  text-decoration: none !important;
+}
+
+button.btn-book-now::after,
+.btn-book-now::after,
+button[class*="btn-book-now"]::after,
+[class*="btn-book-now"]::after,
+#rooms button.btn-book-now::after,
+#rooms .btn-book-now::after,
+section button.btn-book-now::after,
+section .btn-book-now::after {
+  content: "" !important;
+  position: absolute !important;
+  inset: 0 !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4) inset !important;
+  opacity: 0.8 !important;
 }
 
 button.btn-book-now:hover,
@@ -243,9 +269,12 @@ button[class*="btn-book-now"]:hover,
 #rooms .btn-book-now:hover,
 section button.btn-book-now:hover,
 section .btn-book-now:hover {
-  box-shadow: var(--btn-book-now-shadow) 0px 7px 0px 0px !important;
-  background-color: var(--btn-book-now-bg) !important;
-  background: var(--btn-book-now-bg) !important;
+  transform: translateY(-1px) scale(1.02) !important;
+  box-shadow:
+    0 18px 32px rgba(0, 0, 0, 0.24),
+    var(--btn-book-now-shadow) 0px 10px 0px 0px !important;
+  background: radial-gradient(circle at 0% 0%, #facc15, var(--btn-book-now-bg)) !important;
+  filter: brightness(1.03) !important;
   color: var(--btn-book-now-text) !important;
 }
 
@@ -253,24 +282,32 @@ button.btn-book-now:active,
 .btn-book-now:active,
 button[class*="btn-book-now"]:active,
 [class*="btn-book-now"]:active,
-button.btn-book-now:focus,
-.btn-book-now:focus,
-button[class*="btn-book-now"]:focus,
-[class*="btn-book-now"]:focus,
+button.btn-book-now:focus-visible,
+.btn-book-now:focus-visible,
+button[class*="btn-book-now"]:focus-visible,
+[class*="btn-book-now"]:focus-visible,
 #rooms button.btn-book-now:active,
 #rooms .btn-book-now:active,
-#rooms button.btn-book-now:focus,
-#rooms .btn-book-now:focus,
+#rooms button.btn-book-now:focus-visible,
+#rooms .btn-book-now:focus-visible,
 section button.btn-book-now:active,
 section .btn-book-now:active,
-section button.btn-book-now:focus,
-section .btn-book-now:focus {
-  background-color: var(--btn-book-now-bg) !important;
-  background: var(--btn-book-now-bg) !important;
-  box-shadow: var(--btn-book-now-shadow) 0px 0px 0px 0px !important;
-  transform: translateY(5px) !important;
-  transition: 200ms !important;
+section button.btn-book-now:focus-visible,
+section .btn-book-now:focus-visible {
+  background: radial-gradient(circle at 0% 0%, #fbbf24, var(--btn-book-now-bg)) !important;
+  box-shadow: var(--btn-book-now-shadow) 0px 3px 0px 0px !important;
+  transform: translateY(2px) scale(0.99) !important;
   color: var(--btn-book-now-text) !important;
+}
+
+button.btn-book-now:disabled,
+.btn-book-now:disabled,
+button[class*="btn-book-now"]:disabled,
+[class*="btn-book-now"]:disabled {
+  cursor: not-allowed !important;
+  opacity: 0.6 !important;
+  box-shadow: none !important;
+  transform: none !important;
 }
 
 /* Custom styles for react-day-picker in dark mode */

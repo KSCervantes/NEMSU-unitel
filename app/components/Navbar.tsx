@@ -27,18 +27,22 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
 
   return (
     <nav
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isScrolled ? "py-3" : "py-5"
-        } bg-[#112240]`}
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+        isScrolled ? "py-2 sm:py-3" : "py-4 sm:py-5"
+      } bg-[#112240] shadow-lg`}
     >
-      <div className="container mx-auto px-3 sm:px-4 md:px-6 lg:px-8 flex items-center justify-between max-w-7xl">
+      {/* Consistent gradient background */}
+      <div className="absolute inset-0 bg-linear-to-b from-[#0b1433]/50 via-[#112240]/80 to-[#112240] pointer-events-none" />
+
+      <div className="relative container mx-auto px-3 sm:px-4 md:px-6 lg:px-8 flex items-center justify-between max-w-7xl">
         <div className="flex items-center gap-2 sm:gap-3">
           <Image
             src="/img/NEMSU_LOGOO.webp"
             alt="UNITEL Logo"
             width={80}
             height={80}
-            className="h-20 w-auto mx-auto object-contain"
-            style={{ width: 'auto', height: '80px' }}
+            className={`object-contain transition-all duration-300 ${isScrolled ? 'h-14 sm:h-16' : 'h-20'}`}
+            style={{ width: 'auto' }}
             priority
           />
           <div className="text-center">
@@ -93,13 +97,13 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
 
       {/* Mobile Menu */}
       {isMobileMenuOpen && (
-        <div className="md:hidden bg-white mt-2 py-3 px-3 sm:px-4 space-y-2 sm:space-y-3 rounded-b-lg">
+        <div className="md:hidden mt-2 py-3 px-3 sm:px-4 space-y-2 sm:space-y-3 rounded-b-lg bg-[#112240] text-white border-t border-white/10 backdrop-blur-sm">
           {navLinks.map((link) => (
             <a
               key={link.name}
               href={link.href}
               onClick={() => setIsMobileMenuOpen(false)}
-              className="block text-gray-700 hover:text-blue-900 font-medium py-2 px-2 text-sm sm:text-base rounded-lg hover:bg-gray-50 transition-colors"
+              className="block text-white/90 hover:text-amber-400 font-medium py-2 px-2 text-sm sm:text-base rounded-lg hover:bg-white/5 transition-colors"
             >
               {link.name}
             </a>
@@ -109,7 +113,7 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
               setIsMobileMenuOpen(false);
               onBookNowClick?.();
             }}
-            className="w-full btn-book-now text-center mt-2"
+            className="w-full btn-book-now text-center mt-2 justify-center"
           >
             BOOK NOW
           </button>

@@ -106,9 +106,9 @@ export default function RoomManagement() {
         }
       };
     }
-  }, [roomTypes, fetchRoomStatus]);
+  }, [roomTypes]);
 
-  function fetchRoomStatus() {
+  const fetchRoomStatus = useCallback(() => {
     try {
       const bookingsRef = collection(db, 'bookings');
       // Limit listener to active bookings for performance
@@ -214,7 +214,7 @@ export default function RoomManagement() {
     } catch (error) {
       logError('Error fetching room status:', error);
     }
-  }
+  }, [roomTypes]);
 
   // Removed unused aggregate helpers to satisfy lint
 
@@ -322,10 +322,10 @@ export default function RoomManagement() {
             )}
             {/* Rooms Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {roomTypes.map((room, index) => {
+              {roomTypes.map((room) => {
                 const status = roomStatus[room.name];
                 return (
-                  <div key={room.id || `${room.name}-${index}`} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg hover:border-gray-300 dark:hover:border-gray-600 transition-all">
+                  <div key={room.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg hover:border-gray-300 dark:hover:border-gray-600 transition-all">
                     {/* Room Image */}
                     <div className="relative h-64 w-full">
                       <Image
@@ -474,8 +474,23 @@ export default function RoomManagement() {
                   const docRef = doc(db, 'rooms', slug);
                   await setDoc(docRef, payload, { merge: true });
 
-                  // Refresh list
-                  await fetchRooms();
+                  // Optimistically add the room to the state immediately
+                  const newRoomWithId: RoomType = {
+                    id: slug,
+                    name: payload.name,
+                    price: payload.price,
+                    description: payload.description,
+                    image: payload.image || '/img/ROOMS.jpg',
+                    perBed: payload.perBed,
+                    maxGuests: payload.maxGuests,
+                  };
+                  setRoomTypes((prev) => [...prev, newRoomWithId]);
+
+                  // Then refresh list in background to ensure consistency
+                  fetchRooms().catch((err) => {
+                    logError('Error refreshing rooms after add:', err);
+                  });
+
                   setIsAddModalOpen(false);
                   setNewRoom({ name: '', price: '', description: '', perBed: '', maxGuests: 2, imageFile: null });
 
@@ -589,7 +604,22 @@ export default function RoomManagement() {
                 if (imageUrl) payload.image = imageUrl;
                 const docRef = doc(db, 'rooms', slug);
                 await setDoc(docRef, payload, { merge: true });
-                await fetchRooms();
+
+                // Optimistically update the room in state immediately
+                setRoomTypes((prev) => {
+                  return prev.map((room) => {
+                    if (room.id === slug || room.name === editingRoom.name) {
+                      return { ...room, ...payload, id: slug };
+                    }
+                    return room;
+                  });
+                });
+
+                // Then refresh list in background to ensure consistency
+                fetchRooms().catch((err) => {
+                  logError('Error refreshing rooms after edit:', err);
+                });
+
                 setIsEditModalOpen(false);
                 setEditingRoom(null);
                 Swal.fire({

@@ -13,6 +13,7 @@ import EmptyState from '@/app/components/EmptyState';
 import LoadingSpinner from '@/app/components/LoadingSpinner';
 import ModalWithFocusTrap from '@/app/components/ModalWithFocusTrap';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
+import { logError } from '@/lib/logger';
 import Image from 'next/image';
 
 interface MaintenanceTask {
@@ -83,7 +84,7 @@ export default function Maintenance() {
         });
         setAvailableRooms(roomData);
       } catch (error) {
-        console.error('Error fetching rooms:', error);
+        logError(error, { context: 'Maintenance - Error fetching rooms' });
         setAvailableRooms([]);
       }
     };
@@ -177,7 +178,7 @@ export default function Maintenance() {
       }
       handleCloseModal();
     } catch (error) {
-      console.error('Error saving task:', error);
+      logError(error, { context: 'Maintenance - Error saving task' });
       alert('Failed to save maintenance task');
     }
   };
@@ -189,7 +190,7 @@ export default function Maintenance() {
         updatedAt: serverTimestamp()
       });
     } catch (error) {
-      console.error('Error updating status:', error);
+      logError(error, { context: 'Maintenance - Error updating status' });
       alert('Failed to update status');
     }
   };
@@ -283,15 +284,15 @@ export default function Maintenance() {
 
         {/* Tasks List */}
         <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-2xl shadow-xl overflow-hidden border border-gray-200/50 dark:border-gray-700/50 hover:shadow-2xl transition-all duration-300">
-          <div className="px-6 py-5 border-b border-gray-200/50 dark:border-gray-700/50 bg-gradient-to-r from-blue-50/50 via-indigo-50/50 to-transparent dark:from-gray-800/50 relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-400/5 to-indigo-400/5"></div>
-            <div className="relative flex items-center gap-3">
-              <div className="p-2.5 bg-gradient-to-br from-blue-500 via-indigo-600 to-blue-600 rounded-xl shadow-lg">
+        <div className="px-6 py-5 border-b border-gray-200/50 dark:border-gray-700/50 bg-linear-to-r from-blue-50/50 via-indigo-50/50 to-transparent dark:from-gray-800/50 relative overflow-hidden">
+          <div className="absolute inset-0 bg-linear-to-r from-blue-400/5 to-indigo-400/5"></div>
+          <div className="relative flex items-center gap-3">
+            <div className="p-2.5 bg-linear-to-br from-blue-500 via-indigo-600 to-blue-600 rounded-xl shadow-lg">
                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                 </svg>
               </div>
-              <h2 className="text-xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 dark:from-white dark:to-gray-300 bg-clip-text text-transparent">All Maintenance Tasks</h2>
+              <h2 className="text-xl font-bold bg-linear-to-r from-gray-800 to-gray-600 dark:from-white dark:to-gray-300 bg-clip-text text-transparent">All Maintenance Tasks</h2>
               <span className="ml-auto px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-sm font-medium">
                 {tasks.length} Total
               </span>
@@ -451,7 +452,7 @@ export default function Maintenance() {
                               className="w-full h-24 object-cover"
                             />
                           ) : (
-                            <div className="w-full h-24 bg-gradient-to-br from-gray-300 to-gray-400 dark:from-gray-600 dark:to-gray-700 flex items-center justify-center">
+                            <div className="w-full h-24 bg-linear-to-br from-gray-300 to-gray-400 dark:from-gray-600 dark:to-gray-700 flex items-center justify-center">
                               <span className="text-gray-600 dark:text-gray-300 text-2xl">🚪</span>
                             </div>
                           )}

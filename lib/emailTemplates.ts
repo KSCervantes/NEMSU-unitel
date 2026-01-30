@@ -81,7 +81,7 @@ export const generateBookingConfirmationEmail = (
     <div class="footer">
       <p><strong>NEMSU Hotel</strong><br>
       Excellence in Hospitality<br>
-      📧 Email: jambautista@nemsu.edu.ph| 📞 Phone: +639 105 794 330</p>
+      📧 Email: hello@nemsu.edu.ph| 📞 Phone: +639 105 794 330</p>
       <p style="font-size: 12px; color: #9ca3af;">This is an automated notification. Please do not reply to this email.</p>
     </div>
   </div>
@@ -185,7 +185,7 @@ export const generateBookingApprovedEmail = (
     <div class="footer">
       <p><strong>NEMSU Hotel</strong><br>
       Excellence in Hospitality<br>
-      📧 Email: jambautista@nemsu.edu.ph| 📞 Phone: +639 105 794 330</p>
+      📧 Email: hello@nemsu.edu.ph| 📞 Phone: +639 105 794 330</p>
       <p style="font-size: 12px; color: #9ca3af;">This is an automated notification. Please do not reply to this email.</p>
     </div>
   </div>
@@ -283,7 +283,7 @@ export const generateBookingRejectedEmail = (
     <div class="footer">
       <p><strong>NEMSU Hotel</strong><br>
       Excellence in Hospitality<br>
-      📧 Email: jambautista@nemsu.edu.ph| 📞 Phone: +639 105 794 330</p>
+      📧 Email: hello@nemsu.edu.ph| 📞 Phone: +639 105 794 330</p>
       <p style="font-size: 12px; color: #9ca3af;">This is an automated notification. Please do not reply to this email.</p>
     </div>
   </div>

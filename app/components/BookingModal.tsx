@@ -13,6 +13,10 @@ import { useFocusTrap } from '@/app/hooks/useFocusTrap';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
 import { logError } from '@/lib/logger';
 import { Room } from '@/lib/types/room';
+import dayjs, { Dayjs } from 'dayjs';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
+import { MobileTimePicker } from '@mui/x-date-pickers/MobileTimePicker';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -84,8 +88,8 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
   const [dateConflict, setDateConflict] = useState<string | null>(null);
   const [maintenanceConflict, setMaintenanceConflict] = useState<string | null>(null);
   const [range, setRange] = useState<DateRange | undefined>();
-  const [checkInTime, setCheckInTime] = useState<string>("15:00");
-  const [checkOutTime, setCheckOutTime] = useState<string>("11:00");
+  const [checkInTime, setCheckInTime] = useState<Dayjs | null>(dayjs().set('hour', 15).set('minute', 0));
+  const [checkOutTime, setCheckOutTime] = useState<Dayjs | null>(dayjs().set('hour', 11).set('minute', 0));
   const [maintenanceByRoom, setMaintenanceByRoom] = useState<Record<string, { start: number; end: number }[]>>({});
 
   // Get room data from fetched rooms - defined early so it's available throughout the component
@@ -230,13 +234,15 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
 
   // Update form dates when the day picker range changes; checkout is exclusive
   useEffect(() => {
-    if (!range?.from || !range?.to) return;
-    const [ciH, ciM] = checkInTime.split(":").map(Number);
-    const [coH, coM] = checkOutTime.split(":").map(Number);
+    if (!range?.from || !range?.to || !checkInTime || !checkOutTime) return;
+    const ciH = checkInTime.hour();
+    const ciM = checkInTime.minute();
+    const coH = checkOutTime.hour();
+    const coM = checkOutTime.minute();
     const from = new Date(range.from);
-    from.setHours(ciH || 15, ciM || 0, 0, 0);
+    from.setHours(ciH, ciM, 0, 0);
     const to = new Date(range.to);
-    to.setHours(coH || 11, coM || 0, 0, 0);
+    to.setHours(coH, coM, 0, 0);
     setFormData((prev) => ({
       ...prev,
       checkIn: from.toISOString(),
@@ -955,21 +961,35 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             <div>
               <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">Check-in Time</label>
-              <input
-                type="time"
-                value={checkInTime}
-                onChange={(e) => setCheckInTime(e.target.value)}
-                className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
-              />
+              <LocalizationProvider dateAdapter={AdapterDayjs}>
+                <MobileTimePicker
+                  value={checkInTime}
+                  onChange={(newValue) => setCheckInTime(newValue)}
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: "small",
+                      className: "w-full"
+                    }
+                  }}
+                />
+              </LocalizationProvider>
             </div>
             <div>
               <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">Check-out Time</label>
-              <input
-                type="time"
-                value={checkOutTime}
-                onChange={(e) => setCheckOutTime(e.target.value)}
-                className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
-              />
+              <LocalizationProvider dateAdapter={AdapterDayjs}>
+                <MobileTimePicker
+                  value={checkOutTime}
+                  onChange={(newValue) => setCheckOutTime(newValue)}
+                  slotProps={{
+                    textField: {
+                      fullWidth: true,
+                      size: "small",
+                      className: "w-full"
+                    }
+                  }}
+                />
+              </LocalizationProvider>
             </div>
           </div>
 
@@ -1088,6 +1108,10 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
               </h3>
               <div className="space-y-2 text-xs sm:text-sm">
                 <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                  <span className="text-gray-700 font-medium">Room:</span>
+                  <span className="text-blue-900 font-bold">{formData.room}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-blue-200">
                   <span className="text-gray-700 font-medium">Number of nights:</span>
                   <span className="text-blue-900 font-bold">{nights} {nights === 1 ? 'night' : 'nights'}</span>
                 </div>
@@ -1095,16 +1119,32 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                   <span className="text-gray-700 font-medium">Number of guests:</span>
                   <span className="text-blue-900 font-bold">{formData.guests}</span>
                 </div>
-                {selectedRoomData?.perBed && (
-                  <div className="flex justify-between items-center py-2 border-b border-blue-200">
-                    <span className="text-gray-600 text-xs italic">Price per bed × guests × nights</span>
+
+                {/* Room Rate Information */}
+                <div className="py-2 border-t border-b border-blue-300 bg-blue-50 px-2 rounded">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-gray-700 font-medium">Rate per night:</span>
+                    <span className="text-blue-900 font-semibold">₱{selectedRoomData.price.toLocaleString()}</span>
                   </div>
-                )}
+                  {selectedRoomData?.perBed ? (
+                    <div className="text-xs text-gray-600 italic flex justify-between items-center">
+                      <span>(per bed × {formData.guests} guests × {nights} nights)</span>
+                      <span className="text-blue-900 font-semibold">₱{(selectedRoomData.price * parseInt(formData.guests) * nights).toLocaleString()}</span>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-600 italic flex justify-between items-center">
+                      <span>(₱{selectedRoomData.price.toLocaleString()} × {nights} {nights === 1 ? 'night' : 'nights'})</span>
+                      <span className="text-blue-900 font-semibold">₱{(selectedRoomData.price * nights).toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Extra Guests Fee */}
                 {extraGuests > 0 && !selectedRoomData?.perBed && (
                   <>
                     <div className="flex justify-between items-center py-2 border-b border-orange-200 bg-orange-50 px-3 rounded">
                       <span className="text-orange-700 font-medium">Extra guests ({extraGuests}):</span>
-                      <span className="text-orange-800 font-semibold">₱{EXTRA_GUEST_FEE} × {extraGuests} × {nights} nights</span>
+                      <span className="text-orange-800 font-semibold">₱{EXTRA_GUEST_FEE} × {extraGuests} × {nights}</span>
                     </div>
                     <div className="flex justify-between items-center py-2 border-b border-orange-200 bg-orange-50 px-3 rounded">
                       <span className="text-orange-700 font-medium">Extra guest fee:</span>
@@ -1112,6 +1152,8 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                     </div>
                   </>
                 )}
+
+                {/* Total */}
                 <div className="flex justify-between items-center py-2 sm:py-3 mt-2 bg-amber-100 rounded-lg px-3">
                   <span className="text-gray-800 font-bold text-sm sm:text-base">Total Amount:</span>
                   <span className="text-lg sm:text-2xl font-bold text-amber-600">₱{totalPrice.toLocaleString()}</span>
@@ -1123,8 +1165,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
           <button
             type="submit"
             disabled={!!dateConflict || !!maintenanceConflict || loading || !range?.from || !range?.to}
-            className={`w-full text-white py-3 sm:py-4 rounded-full font-bold text-sm sm:text-lg hover:opacity-90 transition-all shadow-lg hover:shadow-xl active:scale-95 ${(dateConflict || maintenanceConflict) ? 'opacity-60 cursor-not-allowed' : ''}`}
-            style={{ backgroundColor: '#2d4f6c' }}
+            className={`btn-book-now w-full justify-center text-sm sm:text-base md:text-lg ${(dateConflict || maintenanceConflict) ? 'opacity-60 cursor-not-allowed' : ''}`}
           >
             BOOK NOW
           </button>

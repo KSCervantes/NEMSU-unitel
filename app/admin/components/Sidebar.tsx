@@ -1,7 +1,7 @@
 "use client";
 export const dynamic = "force-dynamic";
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
@@ -10,9 +10,13 @@ import { useSidebar } from '../context/SidebarContext';
 export default function Sidebar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
-  // Initialize mounted state safely: false during SSR, true on client
-  const [mounted, setMounted] = useState(() => typeof window !== 'undefined');
+  // Mounted flag must be false for SSR and first client render to avoid hydration mismatch
+  const [mounted, setMounted] = useState(false);
   const { isCollapsed, toggleCollapse } = useSidebar();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const menuItems = [
     {
@@ -121,27 +125,29 @@ export default function Sidebar() {
         } bg-gray-900 dark:bg-gray-800 border-r border-gray-700`}
       >
         <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="flex items-center justify-center h-20 px-6 border-b border-gray-700 relative">
-            <div className={`text-center transition-all duration-300 ${isCollapsed ? 'opacity-0 scale-90' : 'opacity-100 scale-100'}`}>
-              <Image
-                src="/img/NEMSU_LOGOO.webp"
-                alt="UNITEL Logo"
-                width={120}
-                height={48}
-                className="mx-auto"
-              />
-              <p className="text-xs text-gray-300 mt-2 font-medium">Hotel Management</p>
-            </div>
-            {isCollapsed && (
-              <div className="absolute inset-0 flex items-center justify-center">
+          {/* Logo / Brand area */}
+          <div className="flex items-center justify-center h-24 px-4 border-b border-gray-700 relative shrink-0">
+            {!isCollapsed ? (
+              <div className="text-center transition-all duration-300 space-y-2">
                 <Image
                   src="/img/NEMSU_LOGOO.webp"
                   alt="UNITEL Logo"
-                  width={100}
-                  height={40}
+                  width={72}
+                  height={72}
+                  className="mx-auto rounded-full bg-white p-1 shadow-md"
                 />
+                <p className="text-xs text-gray-300 font-medium tracking-wide">
+                  Hotel Management System
+                </p>
               </div>
+            ) : (
+              <Image
+                src="/img/NEMSU_LOGOO.webp"
+                alt="UNITEL Logo"
+                width={40}
+                height={40}
+                className="rounded-full bg-white p-1 shadow-md"
+              />
             )}
 
             {/* Desktop Toggle Button */}

@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
+import { logError } from '@/lib/logger';
 
 /**
  * Verify admin authentication from request headers
@@ -75,7 +76,7 @@ export async function verifyAdminAuth(request: NextRequest): Promise<{
       email,
     };
   } catch (error) {
-    console.error('Auth verification error:', error);
+    logError(error as Error, { context: 'Auth verification error' });
     return {
       isValid: false,
       error: 'Authentication failed',
