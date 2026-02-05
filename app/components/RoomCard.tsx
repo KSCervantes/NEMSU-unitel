@@ -16,12 +16,12 @@ export default function RoomCard({ name, price, image, description, perBed, onCl
     <div className={`group relative bg-white rounded-2xl md:rounded-3xl overflow-hidden shadow-md transition-all duration-500 border ${unavailable ? 'border-red-200' : 'border-gray-100 hover:shadow-2xl hover:border-blue-200'}`}>
       <div className="flex flex-col md:flex-row h-full">
         {/* Image Section */}
-        <div className="relative h-48 sm:h-56 md:h-auto md:w-80 shrink-0 overflow-hidden">
+        <div className="relative h-48 sm:h-56 md:h-auto md:w-[400px] lg:w-[500px] xl:w-[550px] shrink-0 overflow-hidden">
           <Image
             src={image}
             alt={name}
             fill
-            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 320px"
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 400px, 550px"
             className="object-cover group-hover:scale-105 transition-transform duration-700"
           />
           <div className="absolute inset-0 bg-linear-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />

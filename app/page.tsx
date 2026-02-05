@@ -280,7 +280,7 @@ export default function Home() {
               </div>
             </div>
             <div className="relative">
-              <div className="relative h-[500px] rounded-3xl overflow-hidden shadow-2xl">
+              <div className="relative h-[500px] rounded-3xl overflow-hidden shadow-2xl" suppressHydrationWarning>
                 <Image
                   src="/img/ROOMS.webp"
                   alt="Hotel Interior"
@@ -349,7 +349,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="bg-gray-900 text-white py-8 px-4">
         <div className="container mx-auto max-w-7xl text-center">
-          <div className="flex items-center justify-center gap-3 mb-4">
+          <div className="flex items-center justify-center gap-3 mb-4" suppressHydrationWarning>
             <Image
               src="/img/NEMSU_LOGOO.webp"
               alt="UNITEL Logo"

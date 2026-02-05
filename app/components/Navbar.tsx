@@ -22,7 +22,6 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
 
   const navLinks = [
     { name: "Home", href: "https://www.nemsu-hm-operation.devworkstudios.net/" },
-    { name: "Rooms", href: "#rooms" },
   ];
 
   return (
@@ -35,7 +34,7 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
       <div className="absolute inset-0 bg-linear-to-b from-[#0b1433]/50 via-[#112240]/80 to-[#112240] pointer-events-none" />
 
       <div className="relative container mx-auto px-3 sm:px-4 md:px-6 lg:px-8 flex items-center justify-between max-w-7xl">
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-3" suppressHydrationWarning>
           <Image
             src="/img/NEMSU_LOGOO.webp"
             alt="UNITEL Logo"
@@ -59,7 +58,7 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
             <a
               key={link.name}
               href={link.href}
-              className="font-medium text-white text-sm lg:text-base transition-colors hover:text-amber-400"
+              className="btn-book-now"
             >
               {link.name}
             </a>
@@ -68,7 +67,7 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
             onClick={onBookNowClick}
             className="btn-book-now"
           >
-            Visit Now
+            Book Now
           </button>
         </div>
 
@@ -103,7 +102,7 @@ export default function Navbar({ onBookNowClick }: NavbarProps = {}) {
               key={link.name}
               href={link.href}
               onClick={() => setIsMobileMenuOpen(false)}
-              className="block text-white/90 hover:text-amber-400 font-medium py-2 px-2 text-sm sm:text-base rounded-lg hover:bg-white/5 transition-colors"
+              className="w-full btn-book-now text-center justify-center"
             >
               {link.name}
             </a>
