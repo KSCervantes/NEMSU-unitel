@@ -1,11 +1,22 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import BookingModal from '../app/components/BookingModal';
 
-describe('BookingModal', () => {
-  it('renders modal when isOpen is true', () => {
+const flushPromises = () => new Promise<void>((resolve) => {
+  setTimeout(resolve, 0);
+});
+
+async function renderOpenBookingModal(selectedRoom = 'Dorm Room') {
+  await act(async () => {
     render(
-      <BookingModal isOpen={true} onClose={() => {}} selectedRoom="Dorm Room" />
+      <BookingModal isOpen={true} onClose={() => {}} selectedRoom={selectedRoom} />
     );
+    await flushPromises();
+  });
+}
+
+describe('BookingModal', () => {
+  it('renders modal when isOpen is true', async () => {
+    await renderOpenBookingModal('Dorm Room');
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
@@ -16,10 +27,8 @@ describe('BookingModal', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('displays the booking title', () => {
-    render(
-      <BookingModal isOpen={true} onClose={() => {}} selectedRoom="Standard Room" />
-    );
+  it('displays the booking title', async () => {
+    await renderOpenBookingModal('Standard Room');
     expect(screen.getByText(/Book Your Stay/i)).toBeInTheDocument();
   });
 });

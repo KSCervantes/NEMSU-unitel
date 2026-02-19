@@ -7,7 +7,7 @@ export default function AdminMainContent({ children }: { children: React.ReactNo
   const { isCollapsed } = useSidebar();
 
   return (
-    <main className={`transition-all duration-300 px-4 sm:px-6 lg:px-8 py-8 ${isCollapsed ? 'lg:ml-20' : 'lg:ml-64'}`}>
+    <main className={`admin-ui transition-all duration-300 px-4 sm:px-6 lg:px-8 py-8 ${isCollapsed ? 'lg:ml-20' : 'lg:ml-64'}`}>
       {children}
     </main>
   );

@@ -6,6 +6,8 @@
   --btn-book-now-bg: #fbbf24;
   --btn-book-now-shadow: #d9920f;
   --btn-book-now-text: #1e3a8a;
+  --font-inter: "Segoe UI";
+  --font-poppins: "Segoe UI";
 }
 
 @theme inline {
@@ -188,6 +190,34 @@ button, a, input, select, textarea {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+/* Hero wordmark styling for the hotel title */
+.hero-hotel-wordmark {
+  font-family: "Georgia", "Times New Roman", serif;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: #f8fafc;
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.18),
+    0 10px 26px rgba(0, 0, 0, 0.42);
+  -webkit-text-stroke: 0.7px rgba(8, 23, 49, 0.35);
+}
+
+.hero-hotel-wordmark .hero-hotel-wordmark-accent {
+  color: #fde68a;
+  text-shadow:
+    0 0 22px rgba(253, 230, 138, 0.45),
+    0 10px 24px rgba(0, 0, 0, 0.4);
+  -webkit-text-stroke: 0.7px rgba(92, 57, 8, 0.26);
+}
+
+@media (max-width: 640px) {
+  .hero-hotel-wordmark {
+    letter-spacing: 0.018em;
+  }
 }
 
 /* Light Theme Dotted Background Pattern */
@@ -374,4 +404,96 @@ button[class*="btn-book-now"]:disabled,
     rgba(239, 68, 68, 0.2) 5px,
     rgba(239, 68, 68, 0.2) 10px
   );
+}
+
+/* Admin table/readability system */
+.admin-ui .admin-page-header h1 {
+  letter-spacing: -0.02em;
+}
+
+.admin-ui .admin-page-header p {
+  line-height: 1.5;
+}
+
+.admin-ui .admin-table-shell {
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+}
+
+.dark .admin-ui .admin-table-shell {
+  border-color: #374151;
+  background: #1f2937;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.admin-ui .admin-data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+
+.admin-ui .admin-data-table thead tr {
+  background: #f8fafc;
+}
+
+.dark .admin-ui .admin-data-table thead tr {
+  background: #111827;
+}
+
+.admin-ui .admin-data-table th {
+  color: #334155;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.dark .admin-ui .admin-data-table th {
+  color: #e5e7eb;
+  border-bottom-color: #374151;
+}
+
+.admin-ui .admin-data-table th,
+.admin-ui .admin-data-table td {
+  border-right: 1px solid #e5e7eb;
+  padding-top: 0.8rem;
+  padding-bottom: 0.8rem;
+}
+
+.dark .admin-ui .admin-data-table th,
+.dark .admin-ui .admin-data-table td {
+  border-right-color: #374151;
+}
+
+.admin-ui .admin-data-table th:last-child,
+.admin-ui .admin-data-table td:last-child {
+  border-right: 0;
+}
+
+.admin-ui .admin-data-table tbody tr + tr td {
+  border-top: 1px solid #eef2f7;
+}
+
+.dark .admin-ui .admin-data-table tbody tr + tr td {
+  border-top-color: #374151;
+}
+
+.admin-ui .admin-data-table tbody tr:hover td {
+  background: #f8fafc;
+}
+
+.dark .admin-ui .admin-data-table tbody tr:hover td {
+  background: rgba(55, 65, 81, 0.45);
+}
+
+.admin-ui .admin-data-table .admin-cell-muted {
+  color: #64748b;
+}
+
+.dark .admin-ui .admin-data-table .admin-cell-muted {
+  color: #9ca3af;
 }

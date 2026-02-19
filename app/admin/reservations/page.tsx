@@ -8,8 +8,8 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
-import { db } from '@/lib/firebase';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addDoc, serverTimestamp, getDocs, where, writeBatch } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp, getDocs, getDoc, where, writeBatch } from 'firebase/firestore';
 import { sanitizeHtml, sanitizeText } from '@/lib/sanitize';
 import { logError, logInfo } from '@/lib/logger';
 import { getEnhancedErrorMessage } from '@/lib/errorMessages';
@@ -21,6 +21,21 @@ import ModalWithFocusTrap from '@/app/components/ModalWithFocusTrap';
 import { DayPicker } from 'react-day-picker';
 import type { DateRange } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
+import { Room } from '@/lib/types/room';
+import { calculateBookingPayment } from '@/lib/bookingPricing';
+import { useCoupons } from '@/app/hooks/useCoupons';
+import { useAdminCurrency } from '../hooks/useAdminCurrency';
+import { useHotelSettings } from '@/app/hooks/useHotelSettings';
+import {
+  CouponId,
+  type CouponIdentityLock,
+  getCouponAvailability,
+  getCouponIdentityLocks,
+  getCouponNowLabel,
+  getCouponUsageDocId,
+  isCouponId,
+  normalizeGuestEmail
+} from '@/lib/coupons';
 
 interface Region {
   code: string;
@@ -68,17 +83,30 @@ interface Booking {
   jobTitle?: string;
   company?: string;
   message?: string;
+  emailLower?: string;
+  coupon?: {
+    applied: boolean;
+    id?: CouponId;
+    title?: string;
+    discountPercent?: number;
+    discountAmount?: number;
+    availabilityText?: string;
+  };
   payment?: {
     nights: number;
     guests: number;
     basePrice: number;
     extraFee: number;
+    subtotal?: number;
+    couponDiscount?: number;
     total: number;
   };
 }
 
 export default function Reservations() {
   const { isAuthenticated } = useProtectedAdminPage();
+  const { formatCurrency } = useAdminCurrency(isAuthenticated);
+  const { settings: hotelSettings } = useHotelSettings(isAuthenticated);
 
   // Enable keyboard navigation
   useKeyboardNavigation();
@@ -100,7 +128,8 @@ export default function Reservations() {
   const [itemsPerPage] = useState(10);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
-  const [rooms, setRooms] = useState<{ id: string; name: string }[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [selectedCouponId, setSelectedCouponId] = useState<CouponId | "">("");
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [conflictStatus, setConflictStatus] = useState<{ hasConflict: boolean; type: 'booking' | 'maintenance' | null; message: string }>({ hasConflict: false, type: null, message: '' });
   const [range, setRange] = useState<DateRange | undefined>();
@@ -109,6 +138,7 @@ export default function Reservations() {
   const [cities, setCities] = useState<City[]>([]);
   const [barangays, setBarangays] = useState<Barangay[]>([]);
   const [addressLoading, setAddressLoading] = useState(false);
+  const { coupons, couponMap, availabilityMap } = useCoupons(isAuthenticated);
   const [formData, setFormData] = useState<Partial<Booking>>({
     name: '',
     surname: '',
@@ -372,11 +402,12 @@ export default function Reservations() {
       try {
         const q = query(collection(db, 'rooms'));
         const snapshot = await getDocs(q);
-        const roomsData = snapshot.docs.map(doc => ({
-          id: doc.id,
-          name: doc.data().name
+        const roomsData: Room[] = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...(docSnap.data() as Omit<Room, 'id'>)
         }));
-        setRooms(roomsData.sort((a, b) => a.name.localeCompare(b.name)));
+        const uniqueRooms = Array.from(new Map(roomsData.map((room) => [room.name, room])).values());
+        setRooms(uniqueRooms.sort((a, b) => a.name.localeCompare(b.name)));
       } catch (error) {
         logError('Error fetching rooms:', error);
       }
@@ -493,60 +524,183 @@ export default function Reservations() {
     checkFormConflicts(formData.room || '', formData.checkIn || '', formData.checkOut || '');
   }, [formData.room, formData.checkIn, formData.checkOut, editingBooking?.id, checkFormConflicts]);
 
+  const getRoomPricingData = useCallback((roomName: string) => {
+    const room = rooms.find((item) => item.name === roomName);
+    if (!room) return null;
+
+    return {
+      price: room.priceNumber || parseFloat(String(room.price || '0').replace(/,/g, '')) || 0,
+      maxGuests: room.maxGuests || 1,
+      perBed: room.perBed,
+    };
+  }, [rooms]);
+
+  useEffect(() => {
+    if (selectedCouponId && !couponMap[selectedCouponId]) {
+      setSelectedCouponId("");
+    }
+  }, [couponMap, selectedCouponId]);
+
+  const selectedAdminCouponAvailability = selectedCouponId
+    ? (availabilityMap[selectedCouponId] || getCouponAvailability(couponMap[selectedCouponId] || null))
+    : null;
+  const isLockedCouponSelection = Boolean(editingBooking?.coupon?.applied && editingBooking.coupon.id);
+  const isIdentityFieldsLocked = Boolean(editingBooking?.coupon?.applied);
+  const isBookingCoreFieldsLocked = Boolean(editingBooking?.coupon?.applied);
+
   const updateBookingStatus = async (bookingId: string, newStatus: 'pending' | 'confirmed' | 'cancelled' | 'completed') => {
     try {
-      // Get booking details before updating
       const booking = bookings.find(b => b.id === bookingId);
-
-      await updateDoc(doc(db, 'bookings', bookingId), {
+      const bookingRef = doc(db, 'bookings', bookingId);
+      const statusPayload = {
         status: newStatus,
         updatedAt: serverTimestamp(),
         ...(newStatus === 'completed' && { completedAt: serverTimestamp() })
-      });
+      };
+
+      if (booking && newStatus === 'confirmed' && booking.coupon?.applied && booking.coupon.id) {
+        const couponId = booking.coupon.id;
+        const normalizedEmail = normalizeGuestEmail(booking.email || '');
+        const couponUsageDocId = getCouponUsageDocId(normalizedEmail);
+        const couponUsageRef = couponUsageDocId ? doc(db, 'couponUsages', couponUsageDocId) : null;
+        const couponIdentityLocks = getCouponIdentityLocks({
+          name: String(booking.name || ''),
+          surname: String(booking.surname || ''),
+          email: String(booking.email || ''),
+          mobile: String(booking.mobile || ''),
+          phone: String(booking.phone || ''),
+          street: String(booking.street || ''),
+          street1: String(booking.street1 || ''),
+          region: String(booking.region || ''),
+          province: String(booking.province || ''),
+          city: String(booking.city || ''),
+          barangay: String(booking.barangay || ''),
+          zip: String(booking.zip || ''),
+          country: String(booking.country || ''),
+        });
+
+        let shouldCreateUsageLock = false;
+        if (couponUsageRef) {
+          const usageSnapshot = await getDoc(couponUsageRef);
+          if (!usageSnapshot.exists()) {
+            shouldCreateUsageLock = true;
+          } else {
+            const usageData = usageSnapshot.data() as { bookingId?: string; couponId?: string };
+            const usageMatchesCurrentBooking =
+              usageData.bookingId === bookingId &&
+              usageData.couponId === couponId;
+            if (!usageMatchesCurrentBooking) {
+              Swal.fire({
+                icon: 'warning',
+                title: 'Coupon Already Used',
+                text: 'This guest identity has already used a coupon.',
+                confirmButtonColor: '#f59e0b'
+              });
+              return;
+            }
+          }
+        }
+
+        const identityLocksToCreate: CouponIdentityLock[] = [];
+        for (const identityLock of couponIdentityLocks) {
+          const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
+          const identitySnapshot = await getDoc(identityRef);
+          if (!identitySnapshot.exists()) {
+            identityLocksToCreate.push(identityLock);
+            continue;
+          }
+
+          const identityData = identitySnapshot.data() as { bookingId?: string; couponId?: string };
+          const identityMatchesCurrentBooking =
+            identityData.bookingId === bookingId &&
+            identityData.couponId === couponId;
+          if (!identityMatchesCurrentBooking) {
+            Swal.fire({
+              icon: 'warning',
+              title: 'Coupon Already Used',
+              text: 'This guest identity has already used a coupon.',
+              confirmButtonColor: '#f59e0b'
+            });
+            return;
+          }
+        }
+
+        const batch = writeBatch(db);
+        batch.update(bookingRef, statusPayload);
+
+        if (couponUsageRef && couponUsageDocId && shouldCreateUsageLock) {
+          batch.set(couponUsageRef, {
+            emailKey: couponUsageDocId,
+            emailLower: normalizedEmail,
+            couponId,
+            bookingId,
+            source: 'admin',
+            createdAt: serverTimestamp(),
+          });
+        }
+
+        identityLocksToCreate.forEach((identityLock) => {
+          const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
+          batch.set(identityRef, {
+            identityKey: identityLock.identityKey,
+            identityType: identityLock.identityType,
+            couponId,
+            bookingId,
+            source: 'admin',
+            createdAt: serverTimestamp(),
+          });
+        });
+
+        await batch.commit();
+      } else {
+        await updateDoc(bookingRef, statusPayload);
+      }
 
       // Send email notification if booking found and status is confirmed or cancelled
+      let emailSent = false;
       if (booking && (newStatus === 'confirmed' || newStatus === 'cancelled')) {
         try {
-          const { generateBookingApprovedEmail, generateBookingRejectedEmail } = await import('@/lib/emailTemplates');
+          const currentUser = auth.currentUser;
+          const idToken = currentUser ? await currentUser.getIdToken() : null;
+          const adminEmail = (currentUser?.email || sessionStorage.getItem('adminEmail') || '').trim().toLowerCase();
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (idToken && adminEmail) {
+            headers.authorization = `Bearer ${idToken}`;
+            headers['x-admin-email'] = adminEmail;
+          }
 
-          const emailHtml = newStatus === 'confirmed'
-            ? generateBookingApprovedEmail(
-                `${booking.name} ${booking.surname}`,
-                bookingId,
-                booking.room,
-                new Date(booking.checkIn).toLocaleDateString('en-US', {
-                  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-                }),
-                new Date(booking.checkOut).toLocaleDateString('en-US', {
-                  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-                }),
-                parseInt(booking.guests)
-              )
-            : generateBookingRejectedEmail(
-                `${booking.name} ${booking.surname}`,
-                bookingId,
-                booking.room,
-                new Date(booking.checkIn).toLocaleDateString('en-US', {
-                  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-                }),
-                new Date(booking.checkOut).toLocaleDateString('en-US', {
-                  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-                }),
-                'Room not available for selected dates'
-              );
-
-          await fetch('/api/send-email', {
+          const response = await fetch('/api/send-email', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({
               to: booking.email,
-              subject: newStatus === 'confirmed'
-                ? `Booking Confirmed - NEMSU Hotel (ID: ${bookingId})`
-                : `Booking Update - NEMSU Hotel (ID: ${bookingId})`,
-              html: emailHtml,
-              type: newStatus
+              type: newStatus === 'confirmed' ? 'approved' : 'rejected',
+              bookingId,
+              guestName: `${booking.name} ${booking.surname}`,
+              roomType: booking.room,
+              checkIn: new Date(booking.checkIn).toLocaleDateString('en-US', {
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+              }),
+              checkOut: new Date(booking.checkOut).toLocaleDateString('en-US', {
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+              }),
+              guests: Number.parseInt(String(booking.guests || '1'), 10) || 1,
+              totalAmount: Number(booking.payment?.total ?? 0) || undefined,
+              reason: newStatus === 'cancelled' ? 'Room not available for selected dates' : undefined,
+              hotelName: hotelSettings.hotelName,
+              contactEmail: hotelSettings.contactEmail,
+              contactPhone: hotelSettings.contactPhone,
+              checkInTime: hotelSettings.checkInTime,
+              checkOutTime: hotelSettings.checkOutTime,
+              currency: hotelSettings.currency,
             })
           });
+
+          if (!response.ok) {
+            logError(`Failed to send email notification: ${response.status}`);
+          } else {
+            emailSent = true;
+          }
         } catch (emailError) {
           logError('Failed to send email notification:', emailError);
           // Don't block the status update if email fails
@@ -557,7 +711,9 @@ export default function Reservations() {
       Swal.fire({
         icon: 'success',
         title: 'Status Updated!',
-        text: `Booking status changed to ${statusText}. Email notification sent to guest.`,
+        text: emailSent
+          ? `Booking status changed to ${statusText}. Email notification sent to guest.`
+          : `Booking status changed to ${statusText}.`,
         toast: true,
         position: 'top-end',
         showConfirmButton: false,
@@ -650,6 +806,17 @@ export default function Reservations() {
     const safeCity = booking.city ? sanitizeText(booking.city) : '';
     const safeProvince = booking.province ? sanitizeText(booking.province) : '';
     const safeMessage = booking.message ? sanitizeHtml(booking.message) : '';
+    const safeHotelName = sanitizeText(hotelSettings.hotelName);
+    const safeCouponTitle = booking.coupon?.title ? sanitizeText(booking.coupon.title) : '';
+    const couponDiscountValue = Number(booking.payment?.couponDiscount ?? booking.coupon?.discountAmount ?? 0) || 0;
+    const formattedBasePrice = formatCurrency(booking.payment?.basePrice ?? 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formattedExtraFee = formatCurrency(booking.payment?.extraFee ?? 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formattedSubtotal = formatCurrency(
+      booking.payment?.subtotal ?? ((booking.payment?.basePrice || 0) + (booking.payment?.extraFee || 0)),
+      { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+    );
+    const formattedCouponDiscount = formatCurrency(-couponDiscountValue, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formattedTotal = formatCurrency(booking.payment?.total ?? 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     printWindow.document.write(`
       <html>
@@ -745,9 +912,9 @@ export default function Reservations() {
         <body>
           <div class="container">
             <div class="logo-container">
-              <img src="/img/NEMSU_LOGOO.webp" alt="NEMSU Logo" />
+              <img src="/img/NEMSU_LOGOO.webp" alt="${safeHotelName} Logo" />
             </div>
-            <h1>UNITEL Hotel Reservation</h1>
+            <h1>${safeHotelName} Reservation</h1>
             <div class="section">
               <div class="section-title">Guest Information</div>
               <table class="info-table">
@@ -773,9 +940,14 @@ export default function Reservations() {
               <div class="payment-summary">
                 ${booking.payment ? `
                 <div><span class="label">Nights:</span> <span class="value">${booking.payment.nights}</span></div>
-                <div><span class="label">Base Price:</span> <span class="value">₱${booking.payment.basePrice.toLocaleString()}</span></div>
-                <div><span class="label">Extra Guest Fee:</span> <span class="value">₱${booking.payment.extraFee.toLocaleString()}</span></div>
-                <div class="total"><span class="label">Total Payment:</span> ₱${booking.payment.total.toLocaleString()}</div>
+                <div><span class="label">Base Price:</span> <span class="value">${formattedBasePrice}</span></div>
+                <div><span class="label">Extra Guest Fee:</span> <span class="value">${formattedExtraFee}</span></div>
+                <div><span class="label">Subtotal:</span> <span class="value">${formattedSubtotal}</span></div>
+                ${booking.coupon?.applied ? `
+                <div><span class="label">Coupon:</span> <span class="value">${safeCouponTitle || sanitizeText(booking.coupon?.id || '')} (${booking.coupon?.discountPercent || 0}% OFF)</span></div>
+                <div><span class="label">Coupon Discount:</span> <span class="value">${formattedCouponDiscount}</span></div>
+                ` : ''}
+                <div class="total"><span class="label">Total Payment:</span> ${formattedTotal}</div>
                 ` : `
                 <div><span class="label" style="color: #64748b;">Payment information not available</span></div>
                 `}
@@ -795,7 +967,7 @@ export default function Reservations() {
               <div class="section-title">Special Requests</div>
               <div class="value">${safeMessage}</div>
             </div>` : ''}
-            <div class="footer">Thank you for choosing UNITEL Hotel</div>
+            <div class="footer">Thank you for choosing ${safeHotelName}</div>
           </div>
         </body>
       </html>
@@ -808,8 +980,10 @@ export default function Reservations() {
     if (booking) {
       setEditingBooking(booking);
       setFormData(booking);
+      setSelectedCouponId(booking.coupon?.applied && booking.coupon.id ? booking.coupon.id : "");
     } else {
       setEditingBooking(null);
+      setSelectedCouponId("");
       setFormData({
         name: '',
         surname: '',
@@ -841,6 +1015,7 @@ export default function Reservations() {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingBooking(null);
+    setSelectedCouponId("");
     setConflictStatus({ hasConflict: false, type: null, message: '' });
     setRange(undefined);
   };
@@ -874,9 +1049,14 @@ export default function Reservations() {
       }
 
       // Validate dates and conflicts before saving
-      const roomName = formData.room?.trim();
-      const checkIn = formData.checkIn ? new Date(formData.checkIn).setHours(0, 0, 0, 0) : NaN;
-      const checkOut = formData.checkOut ? new Date(formData.checkOut).setHours(0, 0, 0, 0) : NaN; // exclusive
+      const effectiveRoom = isBookingCoreFieldsLocked ? editingBooking?.room : formData.room;
+      const effectiveCheckInRaw = isBookingCoreFieldsLocked ? editingBooking?.checkIn : formData.checkIn;
+      const effectiveCheckOutRaw = isBookingCoreFieldsLocked ? editingBooking?.checkOut : formData.checkOut;
+      const effectiveGuestsRaw = isBookingCoreFieldsLocked ? editingBooking?.guests : formData.guests;
+
+      const roomName = effectiveRoom?.trim();
+      const checkIn = effectiveCheckInRaw ? new Date(effectiveCheckInRaw).setHours(0, 0, 0, 0) : NaN;
+      const checkOut = effectiveCheckOutRaw ? new Date(effectiveCheckOutRaw).setHours(0, 0, 0, 0) : NaN; // exclusive
 
       if (!roomName || !Number.isFinite(checkIn) || !Number.isFinite(checkOut) || checkOut <= checkIn) {
         Swal.fire({
@@ -914,6 +1094,136 @@ export default function Reservations() {
         return;
       }
 
+      const roomPricing = getRoomPricingData(roomName);
+      if (!roomPricing) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Room data missing',
+          text: 'The selected room could not be priced. Please refresh and try again.',
+          confirmButtonColor: '#3b82f6'
+        });
+        return;
+      }
+
+      const guests = Math.max(1, parseInt(String(effectiveGuestsRaw || '1'), 10) || 1);
+      if (roomPricing.perBed && guests > 6) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Guest Limit Exceeded',
+          text: 'Dorm rooms are not available for more than 6 guests.',
+          confirmButtonColor: '#f59e0b'
+        });
+        return;
+      }
+
+      const lockedCouponId = editingBooking?.coupon?.applied && editingBooking.coupon.id
+        ? editingBooking.coupon.id
+        : null;
+      const couponId = lockedCouponId || (selectedCouponId && isCouponId(selectedCouponId) ? selectedCouponId : null);
+      const lockedCouponMeta = lockedCouponId && editingBooking?.coupon?.applied ? {
+        id: lockedCouponId,
+        title: editingBooking.coupon.title || lockedCouponId,
+        discountPercent: editingBooking.coupon.discountPercent || 0,
+        availabilityText: editingBooking.coupon.availabilityText || '',
+      } : null;
+      const activeCouponMeta = couponId ? couponMap[couponId] || null : null;
+      const couponMeta = activeCouponMeta
+        ? {
+            id: activeCouponMeta.id,
+            title: activeCouponMeta.title,
+            discountPercent: activeCouponMeta.discountPercent,
+            availabilityText: activeCouponMeta.description,
+          }
+        : lockedCouponMeta;
+      if (couponId && !couponMeta && !lockedCouponId) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Coupon Not Found',
+          text: 'This coupon no longer exists. Please choose another coupon.',
+          confirmButtonColor: '#f59e0b'
+        });
+        return;
+      }
+      const couponAvailability = lockedCouponId
+        ? {
+            active: true,
+            availabilityText: lockedCouponMeta?.availabilityText || 'Coupon locked to existing booking.',
+          }
+        : couponId
+        ? (availabilityMap[couponId] || getCouponAvailability(activeCouponMeta))
+        : null;
+      if (couponId && !lockedCouponId && !couponAvailability?.active) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Coupon Not Available',
+          text: `${couponAvailability?.reason || 'This coupon cannot be used right now.'} Today in Asia/Manila is ${getCouponNowLabel()}.`,
+          confirmButtonColor: '#f59e0b'
+        });
+        return;
+      }
+
+      const normalizedEmail = normalizeGuestEmail(String(formData.email || ''));
+      const couponUsageDocId = couponId ? getCouponUsageDocId(normalizedEmail) : null;
+      const couponUsageRef = couponUsageDocId ? doc(db, 'couponUsages', couponUsageDocId) : null;
+      const shouldReserveCouponUsage = Boolean(couponUsageRef && !lockedCouponId);
+
+      if (shouldReserveCouponUsage && couponUsageRef) {
+        const usageSnapshot = await getDoc(couponUsageRef);
+        if (usageSnapshot.exists()) {
+          Swal.fire({
+            icon: 'warning',
+            title: 'Coupon Already Used',
+            text: 'Only one coupon can be redeemed per guest identity (name/contact/address).',
+            confirmButtonColor: '#f59e0b'
+          });
+          return;
+        }
+      }
+
+      const basePayment = calculateBookingPayment({
+        checkIn: String(effectiveCheckInRaw || ''),
+        checkOut: String(effectiveCheckOutRaw || ''),
+        guests,
+        roomPrice: roomPricing.price,
+        maxGuests: roomPricing.maxGuests,
+        perBed: roomPricing.perBed,
+        couponId: !lockedCouponId && couponAvailability?.active ? couponId : null,
+      });
+      const payment = (lockedCouponId && couponMeta)
+        ? {
+          ...basePayment,
+          couponDiscount: Math.round((basePayment.subtotal * couponMeta.discountPercent) / 100),
+          total: Math.max(0, basePayment.subtotal - Math.round((basePayment.subtotal * couponMeta.discountPercent) / 100)),
+        }
+        : basePayment;
+      const couponIdentityLocks = (couponMeta && !lockedCouponId) ? getCouponIdentityLocks({
+        name: String(formData.name || ''),
+        surname: String(formData.surname || ''),
+        email: String(formData.email || ''),
+        mobile: String(formData.mobile || ''),
+        phone: String(formData.phone || ''),
+        street: String(formData.street || ''),
+        street1: String(formData.street1 || ''),
+        region: String(formData.region || ''),
+        province: String(formData.province || ''),
+        city: String(formData.city || ''),
+        barangay: String(formData.barangay || ''),
+        zip: String(formData.zip || ''),
+        country: String(formData.country || ''),
+      }) : [];
+      const formValues = { ...formData } as Partial<Booking> & {
+        id?: string;
+        createdAt?: unknown;
+      };
+      delete formValues.id;
+      delete formValues.createdAt;
+      if (isBookingCoreFieldsLocked && editingBooking) {
+        formValues.room = editingBooking.room;
+        formValues.checkIn = editingBooking.checkIn;
+        formValues.checkOut = editingBooking.checkOut;
+        formValues.guests = editingBooking.guests;
+      }
+
       // Show loading
       Swal.fire({
         title: editingBooking ? 'Updating...' : 'Creating...',
@@ -924,17 +1234,92 @@ export default function Reservations() {
         }
       });
 
+      const roomSlug = roomName.toLowerCase().trim().replace(/\s+/g, '-');
+      const bookingPayload = {
+        ...formValues,
+        emailLower: normalizedEmail,
+        roomSlug,
+        coupon: couponMeta ? {
+          applied: true,
+          id: couponMeta.id,
+          title: couponMeta.title,
+          discountPercent: couponMeta.discountPercent,
+          discountAmount: payment.couponDiscount,
+          availabilityText: couponAvailability?.availabilityText || ''
+        } : {
+          applied: false
+        },
+        payment: {
+          nights: payment.nights,
+          guests: payment.guests,
+          basePrice: payment.basePrice,
+          extraFee: payment.extraFee,
+          subtotal: payment.subtotal,
+          couponDiscount: payment.couponDiscount,
+          total: payment.total
+        },
+        updatedAt: serverTimestamp()
+      };
+
       // Perform the database operation
       if (editingBooking) {
-        await updateDoc(doc(db, 'bookings', editingBooking.id), {
-          ...formData,
-          updatedAt: serverTimestamp()
-        });
+        const bookingRef = doc(db, 'bookings', editingBooking.id);
+        if (shouldReserveCouponUsage && couponUsageRef && couponMeta && couponUsageDocId) {
+          const batch = writeBatch(db);
+          batch.update(bookingRef, bookingPayload);
+          batch.set(couponUsageRef, {
+            emailKey: couponUsageDocId,
+            emailLower: normalizedEmail,
+            couponId: couponMeta.id,
+            bookingId: editingBooking.id,
+            source: 'admin',
+            createdAt: serverTimestamp(),
+          });
+          couponIdentityLocks.forEach((identityLock) => {
+            const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
+            batch.set(identityRef, {
+              identityKey: identityLock.identityKey,
+              identityType: identityLock.identityType,
+              couponId: couponMeta.id,
+              bookingId: editingBooking.id,
+              source: 'admin',
+              createdAt: serverTimestamp(),
+            });
+          });
+          await batch.commit();
+        } else {
+          await updateDoc(bookingRef, bookingPayload);
+        }
       } else {
-        await addDoc(collection(db, 'bookings'), {
-          ...formData,
-          createdAt: serverTimestamp()
+        const bookingRef = doc(collection(db, 'bookings'));
+        const batch = writeBatch(db);
+        batch.set(bookingRef, {
+          ...bookingPayload,
+          createdAt: serverTimestamp(),
+          status: formData.status || 'pending',
         });
+        if (shouldReserveCouponUsage && couponUsageRef && couponMeta && couponUsageDocId) {
+          batch.set(couponUsageRef, {
+            emailKey: couponUsageDocId,
+            emailLower: normalizedEmail,
+            couponId: couponMeta.id,
+            bookingId: bookingRef.id,
+            source: 'admin',
+            createdAt: serverTimestamp(),
+          });
+          couponIdentityLocks.forEach((identityLock) => {
+            const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
+            batch.set(identityRef, {
+              identityKey: identityLock.identityKey,
+              identityType: identityLock.identityType,
+              couponId: couponMeta.id,
+              bookingId: bookingRef.id,
+              source: 'admin',
+              createdAt: serverTimestamp(),
+            });
+          });
+        }
+        await batch.commit();
       }
 
       // Close loading and show success
@@ -947,6 +1332,16 @@ export default function Reservations() {
       handleCloseModal();
     } catch (error) {
       logError('Error saving booking:', error);
+      const firestoreError = error as { code?: string };
+      if (firestoreError?.code === 'permission-denied' || firestoreError?.code === 'already-exists') {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Coupon Already Used',
+          text: 'This guest identity has already used a coupon.',
+          confirmButtonColor: '#f59e0b'
+        });
+        return;
+      }
       const errorDetails = getEnhancedErrorMessage(error);
       Swal.fire({
         icon: 'error',
@@ -968,6 +1363,8 @@ export default function Reservations() {
         (b.mobile || '').toLowerCase().includes(q) ||
         (b.room || '').toLowerCase().includes(q) ||
         (b.status || '').toLowerCase().includes(q) ||
+        (b.coupon?.title || '').toLowerCase().includes(q) ||
+        (b.coupon?.id || '').toLowerCase().includes(q) ||
         new Date(b.checkIn).toLocaleDateString().toLowerCase().includes(q) ||
         new Date(b.checkOut).toLocaleDateString().toLowerCase().includes(q)
       );
@@ -999,7 +1396,7 @@ export default function Reservations() {
       <Header />
 
       <AdminMainContent>
-        <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="admin-page-header mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">Reservations</h1>
             <p className="text-gray-600 dark:text-gray-400 mt-1 text-sm">
@@ -1090,9 +1487,9 @@ export default function Reservations() {
         </div>
 
         {/* Reservations Table */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="admin-table-shell bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
+            <table className="admin-data-table w-full border-collapse">
               <thead>
                 <tr className="bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white">
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider border-r border-gray-200 dark:border-gray-600">ID</th>
@@ -1109,6 +1506,7 @@ export default function Reservations() {
                   <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Company</th>
                   <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Job Title</th>
                   <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Special Requests</th>
+                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Coupon</th>
                   <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Status</th>
                   <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider">Actions</th>
                 </tr>
@@ -1116,14 +1514,14 @@ export default function Reservations() {
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                 {loading ? (
                   <tr>
-                    <td colSpan={16} className="px-6 py-12 text-center">
+                    <td colSpan={17} className="px-6 py-12 text-center">
                       <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mb-4"></div>
                       <p className="text-gray-500 dark:text-gray-400 font-medium">Loading reservations...</p>
                     </td>
                   </tr>
                 ) : filteredBookings.length === 0 ? (
                   <tr>
-                    <td colSpan={16} className="px-6 py-12 text-center">
+                    <td colSpan={17} className="px-6 py-12 text-center">
                       <div className="mx-auto w-24 h-24 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mb-4">
                         <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -1178,6 +1576,11 @@ export default function Reservations() {
                         <div className="truncate" title={booking.message}>
                           {booking.message || '-'}
                         </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
+                        {booking.coupon?.applied
+                          ? `${booking.coupon.title || booking.coupon.id} (${booking.coupon.discountPercent || 0}% OFF)`
+                          : '-'}
                       </td>
                       <td className="px-4 py-3 text-sm border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
                         <span className={`px-3 py-1.5 text-xs font-bold rounded-lg ${getStatusColor(booking.status)} capitalize inline-block`}>
@@ -1388,7 +1791,8 @@ export default function Reservations() {
                         required
                         value={formData.name || ''}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isIdentityFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                     </div>
                     <div>
@@ -1400,7 +1804,8 @@ export default function Reservations() {
                         required
                         value={formData.surname || ''}
                         onChange={(e) => setFormData({ ...formData, surname: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isIdentityFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                     </div>
                     <div>
@@ -1412,8 +1817,14 @@ export default function Reservations() {
                         required
                         value={formData.email || ''}
                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isIdentityFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
+                      {isIdentityFieldsLocked && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          Identity fields are locked because this reservation already consumed a one-time coupon.
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -1424,7 +1835,8 @@ export default function Reservations() {
                         required
                         value={formData.mobile || ''}
                         onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isIdentityFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                     </div>
                     <div>
@@ -1433,7 +1845,8 @@ export default function Reservations() {
                         type="tel"
                         value={formData.phone || ''}
                         onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isIdentityFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                     </div>
                   </div>
@@ -1456,11 +1869,12 @@ export default function Reservations() {
                         required
                         value={formData.room || ''}
                         onChange={(e) => setFormData({ ...formData, room: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isBookingCoreFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                       >
                         <option value="">-- Select a Room --</option>
                         {rooms.map((room) => (
-                          <option key={room.id} value={room.name}>
+                          <option key={room.id || room.name} value={room.name}>
                             {room.name}
                           </option>
                         ))}
@@ -1476,8 +1890,46 @@ export default function Reservations() {
                         min="1"
                         value={formData.guests || '1'}
                         onChange={(e) => setFormData({ ...formData, guests: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isBookingCoreFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Coupon <span className="text-gray-400 font-normal">(Optional)</span>
+                      </label>
+                      <select
+                        value={selectedCouponId}
+                        onChange={(e) => {
+                          const nextValue = e.target.value;
+                          setSelectedCouponId(nextValue && isCouponId(nextValue) ? nextValue : "");
+                        }}
+                        disabled={Boolean(editingBooking?.coupon?.applied)}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      >
+                        <option value="">No coupon</option>
+                        {coupons.map((coupon) => {
+                          const availability = availabilityMap[coupon.id] || getCouponAvailability(coupon);
+                          return (
+                            <option key={coupon.id} value={coupon.id} disabled={!availability.active}>
+                              {coupon.title} - {coupon.discountPercent}% OFF{availability.active ? '' : ' (Unavailable now)'}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <p className="text-xs text-gray-500 mt-1">
+                        One coupon only per guest identity (name/contact/address), one-time use.
+                      </p>
+                      {editingBooking?.coupon?.applied && (
+                        <p className="text-xs text-amber-700 mt-1">
+                          Coupon is locked for this booking to preserve one-time redemption integrity.
+                        </p>
+                      )}
+                      {!isLockedCouponSelection && selectedCouponId && !selectedAdminCouponAvailability?.active && (
+                        <p className="text-xs text-amber-700 mt-1">
+                          {selectedAdminCouponAvailability?.reason || 'Coupon cannot be used right now.'} Time reference: Asia/Manila ({getCouponNowLabel()}).
+                        </p>
+                      )}
                     </div>
                     <div className="md:col-span-2">
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -1491,7 +1943,7 @@ export default function Reservations() {
                           <p className="text-gray-500 dark:text-gray-400 font-medium">Please select a room first</p>
                         </div>
                       ) : (
-                        <div className={`rounded-lg border-2 p-4 transition-colors ${
+                        <div className={`rounded-lg border-2 p-4 transition-colors ${isBookingCoreFieldsLocked ? 'opacity-60 pointer-events-none' : ''} ${
                           conflictStatus.hasConflict
                             ? conflictStatus.type === 'booking'
                               ? 'border-red-300 bg-red-50 dark:bg-red-900/10 dark:border-red-800'
@@ -1503,7 +1955,7 @@ export default function Reservations() {
                           <DayPicker
                             mode="range"
                             selected={range}
-                            onSelect={setRange}
+                            onSelect={isBookingCoreFieldsLocked ? undefined : setRange}
                             disabled={[{ before: new Date() }, ...disabledRanges()]}
                             numberOfMonths={1}
                             showOutsideDays
@@ -1515,6 +1967,11 @@ export default function Reservations() {
                             ℹ️ Blocked dates are already booked or under maintenance. Checkout day is available for new check-ins.
                           </p>
                         </div>
+                      )}
+                      {isBookingCoreFieldsLocked && (
+                        <p className="text-xs text-amber-700 mt-2">
+                          Room, guest count, and stay dates are locked because a coupon is attached to this booking.
+                        </p>
                       )}
                     </div>
                     {/* Conflict Status Indicator */}
@@ -1605,7 +2062,8 @@ export default function Reservations() {
                         required
                         value={formData.country || 'Philippines'}
                         onChange={handleAddressChange}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isIdentityFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                       >
                         <option value="Philippines">Philippines</option>
                         <option value="United States">United States</option>
@@ -1627,7 +2085,7 @@ export default function Reservations() {
                         value={formData.region || ''}
                         onChange={handleAddressChange}
                         className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                        disabled={addressLoading || formData.country !== "Philippines"}
+                        disabled={isIdentityFieldsLocked || addressLoading || formData.country !== "Philippines"}
                       >
                         <option value="">Select Region</option>
                         {regions.map((region) => (
@@ -1647,7 +2105,7 @@ export default function Reservations() {
                         value={formData.province || ''}
                         onChange={handleAddressChange}
                         className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                        disabled={addressLoading || !formData.region}
+                        disabled={isIdentityFieldsLocked || addressLoading || !formData.region}
                       >
                         <option value="">Select Province</option>
                         {provinces.map((province) => (
@@ -1667,7 +2125,7 @@ export default function Reservations() {
                         value={formData.city || ''}
                         onChange={handleAddressChange}
                         className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                        disabled={addressLoading || !formData.province}
+                        disabled={isIdentityFieldsLocked || addressLoading || !formData.province}
                       >
                         <option value="">Select City/Municipality</option>
                         {cities.map((city) => (
@@ -1687,7 +2145,7 @@ export default function Reservations() {
                         value={formData.barangay || ''}
                         onChange={handleAddressChange}
                         className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                        disabled={addressLoading || !formData.city}
+                        disabled={isIdentityFieldsLocked || addressLoading || !formData.city}
                       >
                         <option value="">Select Barangay</option>
                         {barangays.map((barangay) => (
@@ -1707,7 +2165,8 @@ export default function Reservations() {
                         required
                         value={formData.street || ''}
                         onChange={handleAddressChange}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isIdentityFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                         placeholder="House No., Street Name"
                       />
                     </div>
@@ -1721,11 +2180,17 @@ export default function Reservations() {
                         required
                         value={formData.zip || ''}
                         onChange={handleAddressChange}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        disabled={isIdentityFieldsLocked}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:bg-gray-100 disabled:cursor-not-allowed"
                         placeholder="8307"
                       />
                     </div>
                   </div>
+                  {isIdentityFieldsLocked && (
+                    <p className="text-xs text-amber-700 mt-2">
+                      Address fields are locked because coupon redemption identity is already recorded.
+                    </p>
+                  )}
                 </div>
 
                 {/* Company Details */}
@@ -1781,7 +2246,8 @@ export default function Reservations() {
                   </button>
                   <button
                     type="submit"
-                    className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors"
+                    disabled={conflictStatus.hasConflict || (!isLockedCouponSelection && selectedCouponId ? !selectedAdminCouponAvailability?.active : false)}
+                    className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium transition-colors"
                   >
                     {editingBooking ? 'Update Reservation' : 'Create Reservation'}
                   </button>

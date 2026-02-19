@@ -92,7 +92,7 @@ export default function Analytics() {
 
       <AdminMainContent>
         {/* Header */}
-        <div className="mb-6">
+        <div className="admin-page-header mb-6">
           <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
             Analytics
           </h1>

@@ -4,7 +4,8 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { auth } from '@/lib/firebase';
-import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
+import { isNemsuEmail } from '@/lib/adminAuth';
+import { isAuthorizedAdminUser } from '@/lib/adminUsers';
 import { logAdminActivity } from '@/lib/auditLog';
 import { logWarning } from '@/lib/logger';
 
@@ -22,87 +23,93 @@ export function useProtectedAdminPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const adminAuth = sessionStorage.getItem('adminAuth');
-    const adminEmail = sessionStorage.getItem('adminEmail');
+    let cancelled = false;
     const pagePathname = typeof window !== 'undefined' ? window.location.pathname : 'unknown';
 
-    // Level 1: Check session token
-    if (adminAuth !== 'true') {
-      if (adminEmail) {
-        logAdminActivity({
-          adminEmail,
-          action: 'page_access_attempt',
-          page: pagePathname,
-          status: 'unauthorized',
-          details: 'Invalid session token',
-        });
+    const rejectAccess = (adminEmail: string, details: string) => {
+      if (details.includes('domain') || details.includes('authorized')) {
+        logWarning('[Security] Unauthorized access attempt:', adminEmail, `(${details})`);
       }
-      router.push('/admin');
-      return;
-    }
-
-    // Level 2: Verify email exists
-    if (!adminEmail || !adminEmail.includes('@')) {
       logAdminActivity({
         adminEmail: adminEmail || 'unknown',
         action: 'page_access_attempt',
         page: pagePathname,
         status: 'unauthorized',
-        details: 'Invalid email format',
+        details,
       });
       auth.signOut();
       sessionStorage.removeItem('adminAuth');
       sessionStorage.removeItem('adminEmail');
+      if (!cancelled) {
+        setIsAuthenticated(false);
+        setIsLoading(false);
+      }
       router.push('/admin');
-      return;
-    }
+    };
 
-    // Level 3: NEMSU domain validation (@nemsu.edu.ph required)
-    if (!isNemsuEmail(adminEmail)) {
-      logWarning('[Security] Unauthorized access attempt:', adminEmail, '(invalid domain)');
+    const verifyAccess = async () => {
+      const adminAuth = sessionStorage.getItem('adminAuth');
+      const adminEmail = sessionStorage.getItem('adminEmail') || '';
+
+      // Level 1: Check session token
+      if (adminAuth !== 'true') {
+        if (adminEmail) {
+          logAdminActivity({
+            adminEmail,
+            action: 'page_access_attempt',
+            page: pagePathname,
+            status: 'unauthorized',
+            details: 'Invalid session token',
+          });
+        }
+        if (!cancelled) {
+          setIsAuthenticated(false);
+          setIsLoading(false);
+        }
+        router.push('/admin');
+        return;
+      }
+
+      // Level 2: Verify email exists
+      if (!adminEmail || !adminEmail.includes('@')) {
+        rejectAccess(adminEmail, 'Invalid email format');
+        return;
+      }
+
+      // Level 3: NEMSU domain validation (@nemsu.edu.ph required)
+      if (!isNemsuEmail(adminEmail)) {
+        rejectAccess(adminEmail, 'Invalid NEMSU domain');
+        return;
+      }
+
+      // Level 4: Authorization check (bootstrap list + Firestore-managed admins)
+      const allowedAdmin = await isAuthorizedAdminUser(adminEmail);
+      if (!allowedAdmin) {
+        rejectAccess(adminEmail, 'Email not authorized');
+        return;
+      }
+
+      // All checks passed - log successful access
       logAdminActivity({
         adminEmail,
-        action: 'page_access_attempt',
+        action: 'page_access',
         page: pagePathname,
-        status: 'unauthorized',
-        details: 'Invalid NEMSU domain',
+        status: 'success',
       });
-      auth.signOut();
-      sessionStorage.removeItem('adminAuth');
-      sessionStorage.removeItem('adminEmail');
-      router.push('/admin');
-      return;
-    }
 
-    // Level 4: Whitelist authorization check
-    if (!isAuthorizedAdmin(adminEmail)) {
-      logWarning('[Security] Unauthorized access attempt:', adminEmail, '(not in whitelist)');
-      logAdminActivity({
-        adminEmail,
-        action: 'page_access_attempt',
-        page: pagePathname,
-        status: 'unauthorized',
-        details: 'Email not in authorized list',
-      });
-      auth.signOut();
-      sessionStorage.removeItem('adminAuth');
-      sessionStorage.removeItem('adminEmail');
-      router.push('/admin');
-      return;
-    }
+      if (!cancelled) {
+        queueMicrotask(() => {
+          setIsAuthenticated(true);
+          setIsLoading(false);
+        });
+      }
+    };
 
-    // All checks passed - log successful access
-    logAdminActivity({
-      adminEmail,
-      action: 'page_access',
-      page: pagePathname,
-      status: 'success',
-    });
+    void verifyAccess();
 
-    queueMicrotask(() => {
-      setIsAuthenticated(true);
-      setIsLoading(false);
-    });
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   return { isAuthenticated, isLoading };

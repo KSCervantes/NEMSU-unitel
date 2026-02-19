@@ -1,22 +1,18 @@
 "use client";
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from '../context/SidebarContext';
+import { useHotelSettings } from '@/app/hooks/useHotelSettings';
 
 export default function Sidebar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
-  // Mounted flag must be false for SSR and first client render to avoid hydration mismatch
-  const [mounted, setMounted] = useState(false);
   const { isCollapsed, toggleCollapse } = useSidebar();
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const { settings: hotelSettings } = useHotelSettings(true);
 
   const menuItems = [
     {
@@ -91,22 +87,30 @@ export default function Sidebar() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
       )
+    },
+    {
+      name: 'Coupons',
+      href: '/admin/coupons',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 9a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 010 4v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2a2 2 0 010-4V9z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 9h.01M15 15h.01M10 14l4-4" />
+        </svg>
+      )
     }
   ];
 
   return (
     <>
       {/* Mobile menu button */}
-      {mounted && (
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-white shadow-lg text-gray-700"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-        </button>
-      )}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 rounded-lg bg-white shadow-lg text-gray-700"
+      >
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
 
       {/* Overlay for mobile */}
       {isOpen && (
@@ -131,19 +135,19 @@ export default function Sidebar() {
               <div className="text-center transition-all duration-300 space-y-2">
                 <Image
                   src="/img/NEMSU_LOGOO.webp"
-                  alt="UNITEL Logo"
+                  alt={`${hotelSettings.hotelName} Logo`}
                   width={72}
                   height={72}
                   className="mx-auto rounded-full bg-white p-1 shadow-md"
                 />
                 <p className="text-xs text-gray-300 font-medium tracking-wide">
-                  Hotel Management System
+                  {hotelSettings.hotelName}
                 </p>
               </div>
             ) : (
               <Image
                 src="/img/NEMSU_LOGOO.webp"
-                alt="UNITEL Logo"
+                alt={`${hotelSettings.hotelName} Logo`}
                 width={40}
                 height={40}
                 className="rounded-full bg-white p-1 shadow-md"

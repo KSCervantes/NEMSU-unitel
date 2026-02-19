@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { formatHotelCurrency } from '@/lib/hotelSettings';
 
 interface RoomCardProps {
   name: string;
@@ -9,14 +10,31 @@ interface RoomCardProps {
   onClick: () => void;
   unavailable?: boolean;
   unavailableReason?: 'occupied' | 'maintenance';
+  mobileVertical?: boolean;
+  currency?: string;
 }
 
-export default function RoomCard({ name, price, image, description, perBed, onClick, unavailable = false, unavailableReason }: RoomCardProps) {
+export default function RoomCard({
+  name,
+  price,
+  image,
+  description,
+  perBed,
+  onClick,
+  unavailable = false,
+  unavailableReason,
+  mobileVertical = false,
+  currency = 'PHP',
+}: RoomCardProps) {
+  const imageHeightClass = mobileVertical ? "h-64 sm:h-72 md:h-auto" : "h-48 sm:h-56 md:h-auto";
+  const descriptionClampClass = mobileVertical ? "line-clamp-3" : "line-clamp-2";
+  const formattedPrice = formatHotelCurrency(price, currency, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
   return (
     <div className={`group relative bg-white rounded-2xl md:rounded-3xl overflow-hidden shadow-md transition-all duration-500 border ${unavailable ? 'border-red-200' : 'border-gray-100 hover:shadow-2xl hover:border-blue-200'}`}>
       <div className="flex flex-col md:flex-row h-full">
         {/* Image Section */}
-        <div className="relative h-48 sm:h-56 md:h-auto md:w-[400px] lg:w-[500px] xl:w-[550px] shrink-0 overflow-hidden">
+        <div className={`relative ${imageHeightClass} md:w-[400px] lg:w-[500px] xl:w-[550px] shrink-0 overflow-hidden`}>
           <Image
             src={image}
             alt={name}
@@ -71,7 +89,7 @@ export default function RoomCard({ name, price, image, description, perBed, onCl
               </div>
             </div>
 
-            <p className="text-gray-600 text-xs sm:text-sm md:text-base leading-relaxed mb-4 sm:mb-6 line-clamp-2">
+            <p className={`text-gray-600 text-xs sm:text-sm md:text-base leading-relaxed mb-4 sm:mb-6 ${descriptionClampClass}`}>
               {description}
             </p>
           </div>
@@ -81,7 +99,7 @@ export default function RoomCard({ name, price, image, description, perBed, onCl
             <div className="flex flex-col">
               <span className="text-xs sm:text-sm text-gray-500 mb-1">Starting from</span>
               <div className="flex items-baseline gap-1 sm:gap-2">
-                <span className="text-2xl sm:text-3xl md:text-4xl font-bold text-blue-900">₱{price}</span>
+                <span className="text-2xl sm:text-3xl md:text-4xl font-bold text-blue-900">{formattedPrice}</span>
                 {perBed && (
                   <span className="text-xs sm:text-sm md:text-base text-gray-500 font-medium">{perBed}</span>
                 )}
@@ -92,7 +110,7 @@ export default function RoomCard({ name, price, image, description, perBed, onCl
               onClick={onClick}
               className="btn-book-now whitespace-nowrap"
             >
-              Book Now →
+              Book Now
             </button>
           </div>
         </div>

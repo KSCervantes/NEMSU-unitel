@@ -1,6 +1,6 @@
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import { collection, addDoc, serverTimestamp, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { logInfo, logError } from './logger';
+import { logInfo, logError, logWarning } from './logger';
 
 export interface AuditLog {
   id?: string;
@@ -20,6 +20,11 @@ export interface AuditLog {
  */
 export const logAdminActivity = async (log: AuditLog): Promise<void> => {
   try {
+    if (!auth.currentUser) {
+      logWarning('Skipping audit log because Firebase auth user is not ready:', log.action, log.adminEmail);
+      return;
+    }
+
     const auditLogsRef = collection(db, 'auditLogs');
 
     // Get client IP if possible
@@ -46,6 +51,11 @@ export const logAdminActivity = async (log: AuditLog): Promise<void> => {
 
     logInfo('Audit log recorded:', log.action, log.adminEmail);
   } catch (error) {
+    const firestoreError = error as { code?: string };
+    if (firestoreError?.code === 'permission-denied') {
+      logWarning('Skipping audit log due to Firestore permissions:', log.action, log.adminEmail);
+      return;
+    }
     logError('Failed to log admin activity:', error);
   }
 };
@@ -71,7 +81,7 @@ export const getAdminLogs = async (adminEmail: string, limit: number = 50) => {
 
     return logs.slice(0, limit);
   } catch (error) {
-    console.error('❌ Failed to fetch admin logs:', error);
+    logWarning('Failed to fetch admin logs:', error);
     return [];
   }
 };
@@ -96,7 +106,7 @@ export const getAllAuditLogs = async (limit: number = 100) => {
 
     return logs.slice(0, limit);
   } catch (error) {
-    console.error('❌ Failed to fetch all audit logs:', error);
+    logWarning('Failed to fetch all audit logs:', error);
     return [];
   }
 };
@@ -123,7 +133,7 @@ export const getFailedLoginAttempts = async (limit: number = 50) => {
 
     return logs.slice(0, limit);
   } catch (error) {
-    console.error('❌ Failed to fetch failed login attempts:', error);
+    logWarning('Failed to fetch failed login attempts:', error);
     return [];
   }
 };
@@ -149,7 +159,7 @@ export const getUnauthorizedAttempts = async (limit: number = 50) => {
 
     return logs.slice(0, limit);
   } catch (error) {
-    console.error('❌ Failed to fetch unauthorized attempts:', error);
+    logWarning('Failed to fetch unauthorized attempts:', error);
     return [];
   }
 };

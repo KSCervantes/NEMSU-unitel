@@ -5,6 +5,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Swal from 'sweetalert2';
 import Image from 'next/image';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
+import { useAdminCurrency } from '../hooks/useAdminCurrency';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
@@ -44,6 +45,7 @@ type RoomPayload = {
 export default function RoomManagement() {
   const nextRouter = useNextRouter();
   const { isAuthenticated, isLoading } = useProtectedAdminPage();
+  const { formatCurrency } = useAdminCurrency(isAuthenticated);
 
   // Enable keyboard navigation
   useKeyboardNavigation();
@@ -106,6 +108,7 @@ export default function RoomManagement() {
         }
       };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomTypes]);
 
   const fetchRoomStatus = useCallback(() => {
@@ -259,7 +262,7 @@ export default function RoomManagement() {
       <Header />
 
       <AdminMainContent>
-        <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="admin-page-header mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">Room Management</h1>
             <p className="text-gray-600 dark:text-gray-400 mt-1 text-sm">
@@ -351,7 +354,9 @@ export default function RoomManagement() {
                         <div>
                           <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{room.name}</h3>
                           <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                            <span className="font-bold text-blue-600 dark:text-blue-400 text-lg">₱{room.price}</span>
+                            <span className="font-bold text-blue-600 dark:text-blue-400 text-lg">
+                              {formatCurrency(room.price, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                            </span>
                             {room.perBed ? <span className="text-gray-500 dark:text-gray-400"> {room.perBed}</span> : <span className="text-gray-500 dark:text-gray-400"> per night</span>}
                           </p>
                         </div>

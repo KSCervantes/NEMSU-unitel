@@ -8,8 +8,10 @@ import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
 import { auth, db } from '@/lib/firebase';
 import { collection, query, orderBy, onSnapshot, getDocs } from 'firebase/firestore';
-import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
+import { isNemsuEmail } from '@/lib/adminAuth';
+import { isAuthorizedAdminUser } from '@/lib/adminUsers';
 import { logInfo, logError } from '@/lib/logger';
+import { useHotelSettings } from '@/app/hooks/useHotelSettings';
 
 interface Booking {
   id: string;
@@ -45,10 +47,10 @@ interface MaintenanceTask {
 
 export default function AdminDashboard() {
   const router = useRouter();
+  const { settings: hotelSettings } = useHotelSettings(true);
   // IMPORTANT: Avoid reading sessionStorage during render (causes hydration mismatches).
   // We resolve auth on the client after mount.
   const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
-  const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [maintenanceTasks, setMaintenanceTasks] = useState<MaintenanceTask[]>([]);
   const [totalRooms, setTotalRooms] = useState<number>(0);
@@ -57,25 +59,64 @@ export default function AdminDashboard() {
   const [underMaintenance, setUnderMaintenance] = useState<number>(0);
   const [renderNow] = useState(() => Date.now());
 
-  useEffect(() => {
-    // Resolve auth after mount for consistent SSR/CSR HTML
-    try {
-      const email = sessionStorage.getItem('adminEmail');
-      const hasAdminSession = sessionStorage.getItem('adminAuth') === 'true';
-      const ok = Boolean(hasAdminSession && email && isNemsuEmail(email) && isAuthorizedAdmin(email));
-      setAdminEmail(email);
-      setAuthState(ok ? 'authenticated' : 'unauthenticated');
-      if (!ok) {
-        auth.signOut();
-        sessionStorage.removeItem('adminAuth');
-        sessionStorage.removeItem('adminEmail');
-        router.push('/admin');
-      }
-    } catch (e) {
-      logError('Error resolving admin session:', e);
-      setAuthState('unauthenticated');
-      router.push('/admin');
+  const parseBookingDate = (dateStr?: string): Date | null => {
+    if (!dateStr) return null;
+
+    // Parse YYYY-MM-DD as local date to avoid UTC shift issues.
+    const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+    if (dateOnlyMatch) {
+      const year = Number(dateOnlyMatch[1]);
+      const monthIndex = Number(dateOnlyMatch[2]) - 1;
+      const day = Number(dateOnlyMatch[3]);
+      const localDate = new Date(year, monthIndex, day);
+      if (Number.isNaN(localDate.getTime())) return null;
+      return localDate;
     }
+
+    const parsedDate = new Date(dateStr);
+    if (Number.isNaN(parsedDate.getTime())) return null;
+    return parsedDate;
+  };
+
+  useEffect(() => {
+    // Resolve auth from Firebase session callback for hydration-safe state updates
+    let cancelled = false;
+    const unsubscribe = auth.onAuthStateChanged(() => {
+      void (async () => {
+        try {
+          const email = sessionStorage.getItem('adminEmail');
+          const hasAdminSession = sessionStorage.getItem('adminAuth') === 'true';
+          const ok = Boolean(
+            hasAdminSession &&
+            email &&
+            isNemsuEmail(email) &&
+            await isAuthorizedAdminUser(email)
+          );
+
+          if (!cancelled) {
+            setAuthState(ok ? 'authenticated' : 'unauthenticated');
+          }
+
+          if (!ok) {
+            await auth.signOut();
+            sessionStorage.removeItem('adminAuth');
+            sessionStorage.removeItem('adminEmail');
+            router.push('/admin');
+          }
+        } catch (e) {
+          logError('Error resolving admin session:', e);
+          if (!cancelled) {
+            setAuthState('unauthenticated');
+          }
+          router.push('/admin');
+        }
+      })();
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [router]);
 
   useEffect(() => {
@@ -89,24 +130,33 @@ export default function AdminDashboard() {
       })) as Booking[];
       setBookings(bookingData);
 
-      // Calculate today's check-ins and check-outs
-      const today = new Date().toISOString().split('T')[0];
-      const checkInsToday = bookingData.filter(b => {
-        if (!b.checkIn) return false;
-        const checkInDate = b.checkIn.split('T')[0];
-        return checkInDate === today && b.status === 'confirmed';
+      // Calculate in-house confirmed guests and today's check-outs.
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const checkInsToday = bookingData.filter((b) => {
+        if (b.status !== 'confirmed') return false;
+        const checkInDate = parseBookingDate(b.checkIn);
+        const checkOutDate = parseBookingDate(b.checkOut);
+        if (!checkInDate || !checkOutDate) return false;
+        checkInDate.setHours(0, 0, 0, 0);
+        checkOutDate.setHours(0, 0, 0, 0);
+        return checkInDate.getTime() <= today.getTime() && checkOutDate.getTime() > today.getTime();
       }).length;
-      const checkOutsToday = bookingData.filter(b => {
-        if (!b.checkOut) return false;
-        const checkOutDate = b.checkOut.split('T')[0];
-        return checkOutDate === today && b.status === 'confirmed';
+
+      const checkOutsToday = bookingData.filter((b) => {
+        if (b.status !== 'confirmed') return false;
+        const checkOutDate = parseBookingDate(b.checkOut);
+        if (!checkOutDate) return false;
+        checkOutDate.setHours(0, 0, 0, 0);
+        return checkOutDate.getTime() === today.getTime();
       }).length;
       setTodayCheckIns(checkInsToday);
       setTodayCheckOuts(checkOutsToday);
 
-      logInfo('📅 Today:', today);
-      logInfo('✅ Check-ins today:', checkInsToday);
-      logInfo('👋 Check-outs today:', checkOutsToday);
+      logInfo('Today:', today.toISOString().split('T')[0]);
+      logInfo('In-house confirmed guests:', checkInsToday);
+      logInfo('Confirmed check-outs today:', checkOutsToday);
 
     });
 
@@ -185,8 +235,9 @@ export default function AdminDashboard() {
   const occupiedRooms = new Set<string>();
   bookings.forEach(b => {
     if (b.status === 'confirmed' && b.room && b.checkIn && b.checkOut) {
-      const checkIn = new Date(b.checkIn);
-      const checkOut = new Date(b.checkOut);
+      const checkIn = parseBookingDate(b.checkIn);
+      const checkOut = parseBookingDate(b.checkOut);
+      if (!checkIn || !checkOut) return;
       checkIn.setHours(0, 0, 0, 0);
       checkOut.setHours(0, 0, 0, 0);
       const checkInTime = checkIn.getTime();
@@ -276,14 +327,14 @@ export default function AdminDashboard() {
 
       <AdminMainContent>
         {/* Header Section */}
-        <div className="mb-6">
+        <div className="admin-page-header mb-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
               <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
                 Dashboard
               </h1>
               <p className="text-gray-600 dark:text-gray-400 mt-1 text-sm">
-                Real-time overview of UNITEL Hotel
+                Real-time overview of {hotelSettings.hotelName}
               </p>
             </div>
             <div className="hidden md:flex items-center gap-6 px-4 py-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
@@ -293,7 +344,7 @@ export default function AdminDashboard() {
               </div>
               <div className="w-px h-8 bg-gray-200 dark:bg-gray-700"></div>
               <div className="text-center">
-                <p className="text-xs text-gray-500 dark:text-gray-400">Check-outs</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Today&apos;s Check-outs</p>
                 <p className="text-2xl font-semibold text-gray-900 dark:text-white">{todayCheckOuts}</p>
               </div>
             </div>

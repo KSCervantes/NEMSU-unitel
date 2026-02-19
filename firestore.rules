@@ -7,11 +7,188 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Helper function to check if user is admin (you can customize this)
+    function isBootstrapAdminEmail(email) {
+      return email in [
+        'kscervantes@nemsu.edu.ph',
+        'hello@nemsu.edu.ph',
+        'admin@nemsu.edu.ph',
+        'staff@nemsu.edu.ph',
+        'manager@nemsu.edu.ph'
+      ];
+    }
+
+    function isFirestoreManagedAdminEmail(email) {
+      let adminDoc = get(/databases/$(database)/documents/adminUsers/$(email));
+      return adminDoc.exists() &&
+             adminDoc.data.active is bool &&
+             adminDoc.data.active == true;
+    }
+
+    function isAdminCandidateEmail(email) {
+      return isBootstrapAdminEmail(email) || isFirestoreManagedAdminEmail(email);
+    }
+
+    // Helper function to check if user is admin
     function isAdmin() {
       return isAuthenticated() &&
-             request.auth.token.email != null &&
-             request.auth.token.email.matches('.*@nemsu\\.edu\\.ph$');
+             request.auth.token.email is string &&
+             isAdminCandidateEmail(request.auth.token.email);
+    }
+
+    function isNonNegativeNumber(value) {
+      return (value is int || value is float) && value >= 0;
+    }
+
+    function couponMatchesActiveConfig(couponId, discountPercent) {
+      let coupon = get(/databases/$(database)/documents/coupons/$(couponId));
+      return coupon.exists() &&
+             coupon.data.isActive is bool &&
+             coupon.data.isActive == true &&
+             coupon.data.discountPercent is int &&
+             coupon.data.discountPercent == discountPercent;
+    }
+
+    function isValidPublicBookingCoupon() {
+      let coupon = request.resource.data.coupon;
+      let couponId = request.resource.data.couponId;
+
+      return coupon is map &&
+             coupon.applied is bool &&
+             (
+               (
+                 coupon.applied == false &&
+                 coupon.keys().hasOnly(['applied']) &&
+                 couponId == ''
+               ) ||
+               (
+                 coupon.applied == true &&
+                 coupon.keys().hasOnly(['applied', 'id', 'title', 'discountPercent', 'discountAmount', 'availabilityText']) &&
+                 coupon.id is string &&
+                 coupon.title is string &&
+                 coupon.discountPercent is int &&
+                 coupon.discountPercent > 0 &&
+                 coupon.discountPercent <= 100 &&
+                 isNonNegativeNumber(coupon.discountAmount) &&
+                 coupon.availabilityText is string &&
+                 couponId == coupon.id &&
+                 couponMatchesActiveConfig(coupon.id, coupon.discountPercent)
+               )
+             );
+    }
+
+    function isValidPublicBookingPayment() {
+      let payment = request.resource.data.payment;
+
+      return payment is map &&
+             payment.keys().hasOnly(['nights', 'guests', 'basePrice', 'extraFee', 'subtotal', 'couponDiscount', 'total']) &&
+             payment.nights is int &&
+             payment.nights > 0 &&
+             payment.guests is int &&
+             payment.guests > 0 &&
+             isNonNegativeNumber(payment.basePrice) &&
+             isNonNegativeNumber(payment.extraFee) &&
+             isNonNegativeNumber(payment.subtotal) &&
+             isNonNegativeNumber(payment.couponDiscount) &&
+             isNonNegativeNumber(payment.total);
+    }
+
+    function isValidPublicBookingCreate() {
+      return request.resource.data.keys().hasOnly([
+               'name',
+               'surname',
+               'email',
+               'phone',
+               'mobile',
+               'street',
+               'street1',
+               'region',
+               'province',
+               'city',
+               'barangay',
+               'zip',
+               'country',
+               'fax',
+               'jobTitle',
+               'company',
+               'checkIn',
+               'checkOut',
+               'room',
+               'guests',
+               'couponId',
+               'message',
+               'emailLower',
+               'roomSlug',
+               'status',
+               'createdAt',
+               'updatedAt',
+               'coupon',
+               'payment'
+             ]) &&
+             request.resource.data.name is string &&
+             request.resource.data.name.size() > 0 &&
+             request.resource.data.surname is string &&
+             request.resource.data.surname.size() > 0 &&
+             request.resource.data.email is string &&
+             request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$') &&
+             request.resource.data.phone is string &&
+             request.resource.data.mobile is string &&
+             request.resource.data.street is string &&
+             request.resource.data.street1 is string &&
+             request.resource.data.region is string &&
+             request.resource.data.province is string &&
+             request.resource.data.city is string &&
+             request.resource.data.barangay is string &&
+             request.resource.data.zip is string &&
+             request.resource.data.country is string &&
+             request.resource.data.fax is string &&
+             request.resource.data.jobTitle is string &&
+             request.resource.data.company is string &&
+             request.resource.data.checkIn is string &&
+             request.resource.data.checkIn.size() > 0 &&
+             request.resource.data.checkOut is string &&
+             request.resource.data.checkOut.size() > 0 &&
+             request.resource.data.room is string &&
+             request.resource.data.room.size() > 0 &&
+             request.resource.data.guests is string &&
+             request.resource.data.guests.matches('^[1-9][0-9]*$') &&
+             request.resource.data.couponId is string &&
+             request.resource.data.message is string &&
+             request.resource.data.emailLower is string &&
+             request.resource.data.emailLower.size() > 0 &&
+             request.resource.data.roomSlug is string &&
+             request.resource.data.roomSlug.size() > 0 &&
+             request.resource.data.status == 'pending' &&
+             request.resource.data.createdAt is timestamp &&
+             request.resource.data.updatedAt is timestamp &&
+             isValidPublicBookingCoupon() &&
+             isValidPublicBookingPayment();
+    }
+
+    function getBookingAfter(bookingId) {
+      return getAfter(/databases/$(database)/documents/bookings/$(bookingId));
+    }
+
+    function couponExistsAndEnabled(couponId) {
+      let coupon = get(/databases/$(database)/documents/coupons/$(couponId));
+      return coupon.exists() &&
+             coupon.data.isActive is bool &&
+             coupon.data.isActive == true;
+    }
+
+    function bookingMatchesCoupon(bookingId, couponId) {
+      let booking = getBookingAfter(bookingId);
+      return booking.exists() &&
+             couponExistsAndEnabled(couponId) &&
+             booking.data.coupon is map &&
+             booking.data.coupon.applied == true &&
+             booking.data.coupon.id == couponId;
+    }
+
+    function bookingMatchesCouponAndEmail(bookingId, couponId, emailLower) {
+      let booking = getBookingAfter(bookingId);
+      return bookingMatchesCoupon(bookingId, couponId) &&
+             booking.data.emailLower is string &&
+             booking.data.emailLower == emailLower;
     }
 
     // Rooms collection - Public read, Admin write
@@ -20,11 +197,216 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin(); // Only admins can modify
     }
 
+    // Settings collection
+    // `hotel` doc contains public-facing details (hotel name, contacts, currency, defaults)
+    // and is safe to read publicly for client-side rendering.
+    match /settings/{settingsId} {
+      allow read: if settingsId == 'hotel' || isAdmin();
+      allow create, update: if isAdmin() &&
+        settingsId == 'hotel' &&
+        request.resource.data.keys().hasOnly([
+          'hotelName',
+          'checkInTime',
+          'checkOutTime',
+          'currency',
+          'contactEmail',
+          'contactPhone',
+          'address',
+          'updatedAt'
+        ]) &&
+        request.resource.data.hotelName is string &&
+        request.resource.data.checkInTime is string &&
+        request.resource.data.checkOutTime is string &&
+        request.resource.data.currency is string &&
+        request.resource.data.contactEmail is string &&
+        request.resource.data.contactPhone is string &&
+        request.resource.data.address is string &&
+        request.resource.data.updatedAt is timestamp;
+      allow delete: if isAdmin() && settingsId == 'hotel';
+    }
+
+    // Managed admin users (doc id = lowercase admin email)
+    match /adminUsers/{adminEmailDocId} {
+      allow read: if isAuthenticated() &&
+                   request.auth.token.email is string &&
+                   (isAdmin() || request.auth.token.email == adminEmailDocId);
+      allow create, update: if isAdmin() &&
+        adminEmailDocId.matches('.*@nemsu\\.edu\\.ph$') &&
+        request.resource.data.keys().hasOnly([
+          'email',
+          'active',
+          'role',
+          'addedBy',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        request.resource.data.email is string &&
+        request.resource.data.email == adminEmailDocId &&
+        request.resource.data.email.matches('.*@nemsu\\.edu\\.ph$') &&
+        request.resource.data.active is bool &&
+        request.resource.data.role == 'admin' &&
+        request.resource.data.addedBy is string &&
+        request.resource.data.addedBy.matches('.*@nemsu\\.edu\\.ph$') &&
+        request.resource.data.createdAt is timestamp &&
+        request.resource.data.updatedAt is timestamp;
+      allow delete: if isAdmin() && !isBootstrapAdminEmail(adminEmailDocId);
+    }
+
+    // Coupons collection - Public read, Admin write
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'code',
+          'title',
+          'shortDescription',
+          'description',
+          'iconKey',
+          'discountPercent',
+          'validFrom',
+          'validTo',
+          'isActive',
+          'terms',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        request.resource.data.code is string &&
+        request.resource.data.title is string &&
+        request.resource.data.shortDescription is string &&
+        request.resource.data.description is string &&
+        (
+          !('iconKey' in request.resource.data) ||
+          request.resource.data.iconKey is string
+        ) &&
+        request.resource.data.discountPercent is int &&
+        request.resource.data.discountPercent > 0 &&
+        request.resource.data.discountPercent <= 100 &&
+        request.resource.data.isActive is bool &&
+        request.resource.data.terms is list &&
+        (
+          !('validFrom' in request.resource.data) ||
+          request.resource.data.validFrom is string ||
+          request.resource.data.validFrom == null
+        ) &&
+        (
+          !('validTo' in request.resource.data) ||
+          request.resource.data.validTo is string ||
+          request.resource.data.validTo == null
+        ) &&
+        (
+          !('createdAt' in request.resource.data) ||
+          request.resource.data.createdAt is timestamp
+        ) &&
+        (
+          !('updatedAt' in request.resource.data) ||
+          request.resource.data.updatedAt is timestamp
+        );
+      allow delete: if isAdmin();
+    }
+
     // Bookings collection - Admin read, Public create only
     match /bookings/{bookingId} {
       allow read: if isAdmin(); // Only admins can read full booking details (contains PII)
-      allow create: if true; // Anyone can create bookings
+      allow create: if isAdmin() || isValidPublicBookingCreate(); // Public create is schema-validated and forced to pending
       allow update, delete: if isAdmin(); // Only admins can modify/delete bookings
+    }
+
+    // Coupon usage lock - one coupon redemption per email key
+    match /couponUsages/{usageId} {
+      allow read: if isAdmin();
+      allow create: if
+        isAdmin() &&
+        request.resource.data.keys().hasOnly(['emailKey', 'emailLower', 'couponId', 'bookingId', 'source', 'createdAt']) &&
+        request.resource.data.emailKey == usageId &&
+        request.resource.data.emailLower is string &&
+        request.resource.data.couponId is string &&
+        request.resource.data.bookingId is string &&
+        request.resource.data.source == 'admin' &&
+        request.resource.data.createdAt is timestamp &&
+        bookingMatchesCouponAndEmail(
+          request.resource.data.bookingId,
+          request.resource.data.couponId,
+          request.resource.data.emailLower
+        ) &&
+        !exists(/databases/$(database)/documents/couponUsages/$(usageId));
+      allow update, delete: if isAdmin();
+    }
+
+    // Coupon identity lock - one coupon redemption per guest identity profile
+    match /couponIdentityLocks/{identityKey} {
+      allow read: if isAdmin();
+      allow create: if
+        isAdmin() &&
+        request.resource.data.keys().hasOnly(['identityKey', 'identityType', 'couponId', 'bookingId', 'source', 'createdAt']) &&
+        request.resource.data.identityKey == identityKey &&
+        request.resource.data.identityKey.matches('^(email|name|mobile|phone|address|profile):[0-9a-f]{8}$') &&
+        request.resource.data.identityType in ['email', 'name', 'mobile', 'phone', 'address', 'profile'] &&
+        request.resource.data.couponId is string &&
+        request.resource.data.bookingId is string &&
+        request.resource.data.source == 'admin' &&
+        request.resource.data.createdAt is timestamp &&
+        bookingMatchesCoupon(
+          request.resource.data.bookingId,
+          request.resource.data.couponId
+        ) &&
+        !exists(/databases/$(database)/documents/couponIdentityLocks/$(identityKey));
+      allow update, delete: if isAdmin();
+    }
+
+    // Admin notification preferences (per-admin document id = admin email)
+    match /adminNotifications/{adminEmailDocId} {
+      allow read: if isAdmin() &&
+                   request.auth.token.email == adminEmailDocId;
+      allow create, update: if isAdmin() &&
+                             request.auth.token.email == adminEmailDocId &&
+                             request.resource.data.keys().hasOnly(['viewedIds', 'lastUpdated']) &&
+                             request.resource.data.viewedIds is list &&
+                             request.resource.data.lastUpdated is timestamp;
+      allow delete: if isAdmin();
+    }
+
+    // Audit logs - readable by admins, writable by authenticated admins
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+                     request.resource.data.keys().hasOnly([
+                       'adminEmail',
+                       'action',
+                       'resource',
+                       'page',
+                       'timestamp',
+                       'ipAddress',
+                       'userAgent',
+                       'status',
+                       'details'
+                     ]) &&
+                     request.resource.data.adminEmail is string &&
+                     request.resource.data.action is string &&
+                     request.resource.data.page is string &&
+                     request.resource.data.timestamp is timestamp &&
+                     request.resource.data.status in ['success', 'failed', 'unauthorized'] &&
+                     request.resource.data.adminEmail == request.auth.token.email &&
+                     (
+                       !('resource' in request.resource.data) ||
+                       request.resource.data.resource is string ||
+                       request.resource.data.resource == null
+                     ) &&
+                     (
+                       !('ipAddress' in request.resource.data) ||
+                       request.resource.data.ipAddress is string ||
+                       request.resource.data.ipAddress == null
+                     ) &&
+                     (
+                       !('userAgent' in request.resource.data) ||
+                       request.resource.data.userAgent is string ||
+                       request.resource.data.userAgent == null
+                     ) &&
+                     (
+                       !('details' in request.resource.data) ||
+                       request.resource.data.details is string ||
+                       request.resource.data.details == null
+                     );
+      allow update, delete: if isAdmin();
     }
 
     // Public Availability collection - Non-PII room availability aggregates

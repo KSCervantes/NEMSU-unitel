@@ -2,13 +2,15 @@
 export const dynamic = "force-dynamic";
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { auth, db } from '@/lib/firebase';
 import { collection, onSnapshot, query, where, orderBy, limit, doc, getDoc, setDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { useSidebar } from '../context/SidebarContext';
-import { isAuthorizedAdmin, isNemsuEmail } from '@/lib/adminAuth';
+import { isNemsuEmail } from '@/lib/adminAuth';
+import { isAuthorizedAdminUser } from '@/lib/adminUsers';
+import { logError, logWarning } from '@/lib/logger';
 
 interface Activity {
   id: string;
@@ -28,6 +30,7 @@ interface UserProfile {
 
 export default function Header() {
   const router = useRouter();
+  const pathname = usePathname();
   const { isCollapsed } = useSidebar();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
@@ -43,6 +46,11 @@ export default function Header() {
     initials: ''
   });
 
+  const isPermissionDenied = (error: unknown) => {
+    const firebaseError = error as { code?: string };
+    return firebaseError?.code === 'permission-denied';
+  };
+
   const handleLogout = async () => {
     try {
       await signOut(auth);
@@ -50,68 +58,83 @@ export default function Header() {
       sessionStorage.removeItem('adminEmail');
       router.push('/admin');
     } catch (error) {
-      console.error('Logout error:', error);
+      logError('Logout error:', error);
     }
   };
 
   // Theme handling removed
   useEffect(() => {
-    const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
-      if (!user) {
-        setCanAccessData(false);
-        return;
-      }
-
-      const email = user.email || '';
-
-      if (!isNemsuEmail(email) || !isAuthorizedAdmin(email)) {
-        await signOut(auth);
-        sessionStorage.removeItem('adminAuth');
-        sessionStorage.removeItem('adminEmail');
-        setCanAccessData(false);
-        router.push('/admin');
-        return;
-      }
-
-      const getInitials = (name: string) => {
-        const parts = name.split(' ');
-        if (parts.length >= 2) {
-          return parts[0][0] + parts[1][0];
+    let cancelled = false;
+    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+      void (async () => {
+        if (!user) {
+          if (!cancelled) setCanAccessData(false);
+          return;
         }
-        return parts[0][0];
-      };
 
-      setUserProfile({
-        displayName: user.displayName || 'Admin User',
-        email,
-        photoURL: user.photoURL,
-        initials: user.displayName ? getInitials(user.displayName) : (email ? email[0].toUpperCase() : 'A'),
-      });
+        const email = user.email || '';
+        const allowedAdmin = isNemsuEmail(email) ? await isAuthorizedAdminUser(email) : false;
 
-      try {
-        const notificationsRef = doc(db, 'adminNotifications', email);
-        const notificationsSnap = await getDoc(notificationsRef);
+        if (!allowedAdmin) {
+          await signOut(auth);
+          sessionStorage.removeItem('adminAuth');
+          sessionStorage.removeItem('adminEmail');
+          if (!cancelled) setCanAccessData(false);
+          router.push('/admin');
+          return;
+        }
 
-        if (notificationsSnap.exists()) {
-          const data = notificationsSnap.data();
-          const viewedIds = data.viewedIds || [];
-          setViewedNotifications(new Set(viewedIds));
-        } else {
-          await setDoc(notificationsRef, {
-            viewedIds: [],
-            lastUpdated: serverTimestamp(),
+        const getInitials = (name: string) => {
+          const parts = name.split(' ');
+          if (parts.length >= 2) {
+            return parts[0][0] + parts[1][0];
+          }
+          return parts[0][0];
+        };
+
+        if (!cancelled) {
+          setUserProfile({
+            displayName: user.displayName || 'Admin User',
+            email,
+            photoURL: user.photoURL,
+            initials: user.displayName ? getInitials(user.displayName) : (email ? email[0].toUpperCase() : 'A'),
           });
-          setViewedNotifications(new Set());
         }
-        setCanAccessData(true);
-      } catch (error) {
-        console.error('Error loading viewed notifications from Firebase:', error);
-        setViewedNotifications(new Set());
-        setCanAccessData(false);
-      }
+
+        try {
+          const notificationsRef = doc(db, 'adminNotifications', email);
+          const notificationsSnap = await getDoc(notificationsRef);
+
+          if (notificationsSnap.exists()) {
+            const data = notificationsSnap.data();
+            const viewedIds = data.viewedIds || [];
+            if (!cancelled) setViewedNotifications(new Set(viewedIds));
+          } else {
+            await setDoc(notificationsRef, {
+              viewedIds: [],
+              lastUpdated: serverTimestamp(),
+            });
+            if (!cancelled) setViewedNotifications(new Set());
+          }
+          if (!cancelled) setCanAccessData(true);
+        } catch (error) {
+          if (isPermissionDenied(error)) {
+            logWarning('Skipped loading viewed notifications due to Firestore permissions');
+          } else {
+            logError('Error loading viewed notifications from Firebase:', error);
+          }
+          if (!cancelled) {
+            setViewedNotifications(new Set());
+            setCanAccessData(false);
+          }
+        }
+      })();
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      cancelled = true;
+      unsubscribeAuth();
+    };
   }, [router]);
 
   useEffect(() => {
@@ -131,7 +154,11 @@ export default function Header() {
       });
       setUnreadCount(unread);
     }, (err) => {
-      console.error('Notifications listener error:', err);
+      if (isPermissionDenied(err)) {
+        logWarning('Skipped notifications listener due to Firestore permissions');
+      } else {
+        logError('Notifications listener error:', err);
+      }
       setUnreadCount(0);
     });
 
@@ -147,7 +174,11 @@ export default function Header() {
       });
       setRecentActivities(activities);
     }, (err) => {
-      console.error('Activities listener error:', err);
+      if (isPermissionDenied(err)) {
+        logWarning('Skipped activities listener due to Firestore permissions');
+      } else {
+        logError('Activities listener error:', err);
+      }
       setRecentActivities([]);
     });
 
@@ -228,18 +259,33 @@ export default function Header() {
         };
     }
   };
+
+  const getAdminSectionLabel = (path: string) => {
+    if (path.startsWith('/admin/analytics')) return 'Analytics';
+    if (path.startsWith('/admin/revenue')) return 'Revenue';
+    if (path.startsWith('/admin/reservations')) return 'Reservations';
+    if (path.startsWith('/admin/completed')) return 'Completed';
+    if (path.startsWith('/admin/room')) return 'Room';
+    if (path.startsWith('/admin/calendar')) return 'Calendar';
+    if (path.startsWith('/admin/maintenance')) return 'Maintenance';
+    if (path.startsWith('/admin/coupons')) return 'Coupons';
+    if (path.startsWith('/admin/settings')) return 'Settings';
+    if (path.startsWith('/admin/audit-logs')) return 'Audit Logs';
+    return 'Dashboard';
+  };
+
+  const currentSection = getAdminSectionLabel(pathname);
   return (
     <header className="sticky top-0 z-30 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
       <div className="flex items-center justify-between px-4 sm:px-6 py-3">
         {/* Left section - Title */}
         <div className="flex items-center space-x-4">
           <div className={`transition-all duration-300 ${isCollapsed ? 'lg:ml-20' : 'lg:ml-64'}`}>
-            <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">
-              Admin Dashboard
+            <h2 className="text-lg sm:text-xl font-extralight text-gray-900 dark:text-white">
+              Welcome Back, Admin!
             </h2>
-            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2 mt-0.5">
-              <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
-              Hotel Management System
+            <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+              {`Home/${currentSection}`}
             </p>
           </div>
         </div>
@@ -273,7 +319,11 @@ export default function Header() {
                         lastUpdated: serverTimestamp()
                       });
                     } catch (error) {
-                      console.error('Error updating viewed notifications in Firebase:', error);
+                      if (isPermissionDenied(error)) {
+                        logWarning('Skipped notification-view update due to Firestore permissions');
+                      } else {
+                        logError('Error updating viewed notifications in Firebase:', error);
+                      }
                     }
                   }
                 }
@@ -343,7 +393,11 @@ export default function Header() {
                                   lastUpdated: serverTimestamp()
                                 });
                               } catch (error) {
-                                console.error('Error updating viewed notification in Firebase:', error);
+                                if (isPermissionDenied(error)) {
+                                  logWarning('Skipped notification-view update due to Firestore permissions');
+                                } else {
+                                  logError('Error updating viewed notification in Firebase:', error);
+                                }
                               }
                             }
 

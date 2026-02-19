@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 export const dynamic = "force-dynamic";
 
 import { useState, useEffect, useCallback } from "react";
@@ -8,7 +8,7 @@ import type { DateRange } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import Image from "next/image";
 import { db } from '@/lib/firebase';
-import { collection, addDoc, serverTimestamp, onSnapshot, query, where, getDocs } from 'firebase/firestore';
+import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
 import { useFocusTrap } from '@/app/hooks/useFocusTrap';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
 import { logError } from '@/lib/logger';
@@ -17,11 +17,28 @@ import dayjs, { Dayjs } from 'dayjs';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { MobileTimePicker } from '@mui/x-date-pickers/MobileTimePicker';
+import { calculateBookingPayment, EXTRA_GUEST_FEE } from '@/lib/bookingPricing';
+import { useCoupons } from '@/app/hooks/useCoupons';
+import { DEFAULT_HOTEL_SETTINGS, formatHotelCurrency, type SupportedCurrency } from '@/lib/hotelSettings';
+import {
+  CouponId,
+  getCouponAvailability,
+  getCouponNowLabel,
+  isCouponId,
+  normalizeGuestEmail
+} from '@/lib/coupons';
 
 interface BookingModalProps {
   isOpen: boolean;
   onClose: () => void;
   selectedRoom?: string;
+  selectedCouponId?: CouponId | "";
+  hotelName?: string;
+  currency?: SupportedCurrency;
+  contactEmail?: string;
+  contactPhone?: string;
+  defaultCheckInTime?: string;
+  defaultCheckOutTime?: string;
 }
 
 interface Region {
@@ -45,11 +62,33 @@ interface Barangay {
   name: string;
 }
 
-export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingModalProps) {
+function parseSettingTime(time: string | undefined, fallbackHour: number, fallbackMinute: number) {
+  const match = typeof time === 'string' ? /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time.trim()) : null;
+  const next = dayjs();
+  if (!match) {
+    return next.set('hour', fallbackHour).set('minute', fallbackMinute).set('second', 0).set('millisecond', 0);
+  }
+  return next
+    .set('hour', Number.parseInt(match[1], 10))
+    .set('minute', Number.parseInt(match[2], 10))
+    .set('second', 0)
+    .set('millisecond', 0);
+}
+
+export default function BookingModal({
+  isOpen,
+  onClose,
+  selectedRoom,
+  selectedCouponId = "",
+  hotelName = DEFAULT_HOTEL_SETTINGS.hotelName,
+  currency = DEFAULT_HOTEL_SETTINGS.currency,
+  contactEmail = DEFAULT_HOTEL_SETTINGS.contactEmail,
+  contactPhone = DEFAULT_HOTEL_SETTINGS.contactPhone,
+  defaultCheckInTime = DEFAULT_HOTEL_SETTINGS.checkInTime,
+  defaultCheckOutTime = DEFAULT_HOTEL_SETTINGS.checkOutTime,
+}: BookingModalProps) {
   // Enable keyboard navigation
   useKeyboardNavigation();
-
-  const EXTRA_GUEST_FEE = 200;
 
   // State for rooms fetched from Firestore
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -76,6 +115,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     checkOut: "",
     room: selectedRoom || "",
     guests: "1",
+    couponId: selectedCouponId || "",
     message: "",
   });
 
@@ -84,13 +124,17 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
   const [cities, setCities] = useState<City[]>([]);
   const [barangays, setBarangays] = useState<Barangay[]>([]);
   const [loading, setLoading] = useState(false);
-  const [bookedByRoom, setBookedByRoom] = useState<Record<string, { start: number; end: number }[]>>({});
-  const [dateConflict, setDateConflict] = useState<string | null>(null);
   const [maintenanceConflict, setMaintenanceConflict] = useState<string | null>(null);
   const [range, setRange] = useState<DateRange | undefined>();
-  const [checkInTime, setCheckInTime] = useState<Dayjs | null>(dayjs().set('hour', 15).set('minute', 0));
-  const [checkOutTime, setCheckOutTime] = useState<Dayjs | null>(dayjs().set('hour', 11).set('minute', 0));
+  const [checkInTime, setCheckInTime] = useState<Dayjs | null>(() => parseSettingTime(defaultCheckInTime, 15, 0));
+  const [checkOutTime, setCheckOutTime] = useState<Dayjs | null>(() => parseSettingTime(defaultCheckOutTime, 11, 0));
   const [maintenanceByRoom, setMaintenanceByRoom] = useState<Record<string, { start: number; end: number }[]>>({});
+  const { coupons, couponMap, availabilityMap, loading: couponsLoading } = useCoupons(isOpen);
+  const formatCurrency = useCallback(
+    (amount: unknown, options: Intl.NumberFormatOptions = {}) =>
+      formatHotelCurrency(amount, currency, options),
+    [currency]
+  );
 
   // Get room data from fetched rooms - defined early so it's available throughout the component
   const getRoomData = (roomName: string) => {
@@ -112,6 +156,28 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     }
   }, [selectedRoom]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setCheckInTime(parseSettingTime(defaultCheckInTime, 15, 0));
+    setCheckOutTime(parseSettingTime(defaultCheckOutTime, 11, 0));
+  }, [defaultCheckInTime, defaultCheckOutTime, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setFormData((prev) => ({
+      ...prev,
+      couponId: selectedCouponId && isCouponId(selectedCouponId) ? selectedCouponId : "",
+    }));
+  }, [isOpen, selectedCouponId]);
+
+  useEffect(() => {
+    if (couponsLoading) return;
+    if (!formData.couponId) return;
+    if (!couponMap[formData.couponId]) {
+      setFormData((prev) => ({ ...prev, couponId: "" }));
+    }
+  }, [couponMap, couponsLoading, formData.couponId]);
+
   // Fetch rooms from Firestore when modal opens
   useEffect(() => {
     if (!isOpen) return;
@@ -132,29 +198,6 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
       }
     };
     fetchRooms();
-  }, [isOpen]);
-
-  // Subscribe to bookings in real time to block overlapping dates
-  useEffect(() => {
-    if (!isOpen) return;
-    type BookingSnapshot = { room?: string; checkIn?: string; checkOut?: string; status?: string };
-    const unsub = onSnapshot(collection(db, 'bookings'), (snap) => {
-      const map: Record<string, { start: number; end: number }[]> = {};
-      snap.forEach((doc) => {
-        const d = doc.data() as BookingSnapshot;
-        if (!d?.room || !d?.checkIn || !d?.checkOut) return;
-        // Only block confirmed bookings - pending bookings don't affect room availability
-        if (d.status === 'confirmed') {
-          const start = new Date(d.checkIn).getTime();
-          const end = new Date(d.checkOut).getTime();
-          if (!Number.isFinite(start) || !Number.isFinite(end)) return;
-          if (!map[d.room]) map[d.room] = [];
-          map[d.room].push({ start, end });
-        }
-      });
-      setBookedByRoom(map);
-    });
-    return () => unsub();
   }, [isOpen]);
 
   // Subscribe to maintenance windows (if date ranges exist) to disable those days too
@@ -197,30 +240,13 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     return () => unsub();
   }, [isOpen]);
 
-  const rangeOverlaps = useCallback((roomName: string, startIso?: string, endIso?: string) => {
-    if (!roomName || !startIso || !endIso) return false;
-    const start = new Date(startIso).getTime();
-    const end = new Date(endIso).getTime();
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return false;
-    const ranges = bookedByRoom[roomName] || [];
-    // Treat checkout as exclusive; overlap if [start, end) intersects any existing [r.start, r.end)
-    return ranges.some(r => start < r.end && end > r.start);
-  }, [bookedByRoom]);
-
-  // Validate date selection against existing bookings
+  // Validate date selection against maintenance windows
   useEffect(() => {
     if (!formData.room || !formData.checkIn || !formData.checkOut) {
-      setDateConflict(null);
       setMaintenanceConflict(null);
       return;
     }
-    // Booking conflict
-    if (rangeOverlaps(formData.room, formData.checkIn, formData.checkOut)) {
-      setDateConflict('Selected dates overlap an existing reservation for this room.');
-    } else {
-      setDateConflict(null);
-    }
-    // Maintenance conflict
+
     const start = new Date(formData.checkIn).getTime();
     const end = new Date(formData.checkOut).getTime();
     const maintRanges = maintenanceByRoom[formData.room] || [];
@@ -230,7 +256,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     } else {
       setMaintenanceConflict(null);
     }
-  }, [formData.room, formData.checkIn, formData.checkOut, bookedByRoom, maintenanceByRoom, rangeOverlaps]);
+  }, [formData.room, formData.checkIn, formData.checkOut, maintenanceByRoom]);
 
   // Update form dates when the day picker range changes; checkout is exclusive
   useEffect(() => {
@@ -250,9 +276,8 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     }));
   }, [range, checkInTime, checkOutTime]);
 
-  // Build disabled day intervals for the selected room (checkout exclusive)
+  // Build disabled day intervals for maintenance windows (checkout exclusive)
   const disabledRanges = () => {
-    const r = bookedByRoom[formData.room] || [];
     const m = maintenanceByRoom[formData.room] || [];
     const toIntervals = (list: { start: number; end: number }[]) => list.map((iv) => {
       const from = new Date(iv.start);
@@ -264,56 +289,53 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
       last.setHours(23, 59, 59, 999);
       return { from, to: last };
     });
-    return [...toIntervals(r), ...toIntervals(m)];
+    return toIntervals(m);
   };
 
   // Get selected room data from fetched rooms
   const selectedRoomData = formData.room ? getRoomData(formData.room) : null;
+  const activeCouponId = isCouponId(formData.couponId) ? formData.couponId : null;
+  const activeCoupon = activeCouponId ? couponMap[activeCouponId] || null : null;
+  const activeCouponAvailability = activeCouponId
+    ? (availabilityMap[activeCouponId] || getCouponAvailability(activeCoupon))
+    : null;
 
   // Calculate nights and total price
   const calculateStay = () => {
     if (!formData.checkIn || !formData.checkOut || !selectedRoomData) {
-      return { nights: 0, totalPrice: 0, extraGuests: 0, extraGuestFee: 0 };
+      return {
+        nights: 0,
+        totalPrice: 0,
+        extraGuests: 0,
+        extraGuestFee: 0,
+        basePrice: 0,
+        subtotal: 0,
+        couponDiscount: 0,
+      };
     }
 
-    const checkIn = new Date(formData.checkIn);
-    const checkOut = new Date(formData.checkOut);
-    const diffTime = checkOut.getTime() - checkIn.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    const nights = diffDays > 0 ? diffDays : 0;
+    const payment = calculateBookingPayment({
+      checkIn: formData.checkIn,
+      checkOut: formData.checkOut,
+      guests: parseInt(formData.guests, 10) || 1,
+      roomPrice: selectedRoomData.price,
+      maxGuests: selectedRoomData.maxGuests,
+      perBed: selectedRoomData.perBed,
+      couponId: activeCouponAvailability?.active ? activeCouponId : null,
+    });
 
-    const roomInfo = getRoomData(formData.room);
-    if (!roomInfo) {
-      return { nights: 0, totalPrice: 0, extraGuests: 0, extraGuestFee: 0 };
-    }
-
-    const pricePerNight = roomInfo.price;
-    const guestsCount = parseInt(formData.guests) || 1;
-    const maxGuests = roomInfo.maxGuests;
-
-    let totalPrice = 0;
-    let extraGuests = 0;
-    let extraGuestFee = 0;
-
-    // For rooms with perBed pricing, multiply by number of guests (price per bed)
-    if (roomInfo.perBed) {
-      totalPrice = pricePerNight * guestsCount * nights;
-    } else {
-      // Base price for the room
-      totalPrice = pricePerNight * nights;
-
-      // Check if guests exceed the room limit
-      if (guestsCount > maxGuests) {
-        extraGuests = guestsCount - maxGuests;
-        extraGuestFee = extraGuests * EXTRA_GUEST_FEE * nights;
-        totalPrice += extraGuestFee;
-      }
-    }
-
-    return { nights, totalPrice, extraGuests, extraGuestFee };
+    return {
+      nights: payment.nights,
+      totalPrice: payment.total,
+      extraGuests: payment.extraGuests,
+      extraGuestFee: payment.extraFee,
+      basePrice: payment.basePrice,
+      subtotal: payment.subtotal,
+      couponDiscount: payment.couponDiscount,
+    };
   };
 
-  const { nights, totalPrice, extraGuests, extraGuestFee } = calculateStay();
+  const { nights, totalPrice, extraGuests, extraGuestFee, couponDiscount } = calculateStay();
 
   // Fetch regions on component mount
   useEffect(() => {
@@ -386,17 +408,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
     e.preventDefault();
     setLoading(true);
     try {
-      // Final guard to prevent double booking or maintenance
-      if (rangeOverlaps(formData.room, formData.checkIn, formData.checkOut)) {
-        Swal.fire({
-          icon: 'warning',
-          title: 'Dates Not Available',
-          text: 'These dates are already reserved for this room. Please choose different dates.',
-          confirmButtonColor: '#f59e0b'
-        });
-        setLoading(false);
-        return;
-      }
+      // Final guard to prevent maintenance overlap
       const start = new Date(formData.checkIn).getTime();
       const end = new Date(formData.checkOut).getTime();
       // Basic date validation: checkout must be after check-in
@@ -422,7 +434,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
         setLoading(false);
         return;
       }
-      // Calculate payment
+      // Calculate payment and coupon validation
       const roomInfo = getRoomData(formData.room);
       if (!roomInfo) {
         Swal.fire({
@@ -434,7 +446,6 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
         return;
       }
 
-      const nights = Math.max(1, Math.ceil((new Date(formData.checkOut).getTime() - new Date(formData.checkIn).getTime()) / (1000 * 60 * 60 * 24)));
       const guests = parseInt(formData.guests) || 1;
 
       // Dorm room policy: disable availability if guests exceed 6
@@ -449,39 +460,78 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
         return;
       }
 
-      let basePrice = 0;
-      let extraFee = 0;
-      let totalPayment = 0;
-
-      // For rooms with perBed pricing: multiply by number of guests
-      if (roomInfo.perBed) {
-        basePrice = roomInfo.price * guests * nights;
-        totalPayment = basePrice;
-        // No extra guest fee for per-bed pricing
-      } else {
-        // For other rooms: base price per night, extra fee for guests exceeding max
-        const extraGuests = Math.max(0, guests - roomInfo.maxGuests);
-        basePrice = roomInfo.price * nights;
-        extraFee = extraGuests * EXTRA_GUEST_FEE * nights;
-        totalPayment = basePrice + extraFee;
+      const couponId = isCouponId(formData.couponId) ? formData.couponId : null;
+      const couponMeta = couponId ? couponMap[couponId] || null : null;
+      if (couponId && !couponMeta) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Coupon Not Found',
+          text: 'This coupon no longer exists. Please choose another coupon.',
+          confirmButtonColor: '#f59e0b'
+        });
+        setLoading(false);
+        return;
       }
 
-      // Save booking to Firestore
+      const couponAvailability = couponId
+        ? (availabilityMap[couponId] || getCouponAvailability(couponMeta))
+        : null;
+      if (couponId && !couponAvailability?.active) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Coupon Not Available',
+          text: `${couponAvailability?.reason || 'This coupon cannot be used right now.'} Today in Asia/Manila is ${getCouponNowLabel()}.`,
+          confirmButtonColor: '#f59e0b'
+        });
+        setLoading(false);
+        return;
+      }
+
+      const normalizedEmail = normalizeGuestEmail(formData.email);
+
+      const payment = calculateBookingPayment({
+        checkIn: formData.checkIn,
+        checkOut: formData.checkOut,
+        guests,
+        roomPrice: roomInfo.price,
+        maxGuests: roomInfo.maxGuests,
+        perBed: roomInfo.perBed,
+        couponId: couponAvailability?.active ? couponId : null,
+      });
+
+      // Save booking to Firestore (coupon validation is finalized during admin confirmation)
       const roomSlug = (formData.room || '').toLowerCase().trim().replace(/\s+/g, '-');
-      const bookingRef = await addDoc(collection(db, 'bookings'), {
+      const bookingRef = doc(collection(db, 'bookings'));
+      const batch = writeBatch(db);
+
+      batch.set(bookingRef, {
         ...formData,
+        emailLower: normalizedEmail,
         roomSlug,
         status: 'pending',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        coupon: couponMeta ? {
+          applied: true,
+          id: couponMeta.id,
+          title: couponMeta.title,
+          discountPercent: couponMeta.discountPercent,
+          discountAmount: payment.couponDiscount,
+          availabilityText: couponAvailability?.availabilityText || ''
+        } : {
+          applied: false
+        },
         payment: {
-          nights,
-          guests,
-          basePrice,
-          extraFee,
-          total: totalPayment
+          nights: payment.nights,
+          guests: payment.guests,
+          basePrice: payment.basePrice,
+          extraFee: payment.extraFee,
+          subtotal: payment.subtotal,
+          couponDiscount: payment.couponDiscount,
+          total: payment.total
         }
       });
+      await batch.commit();
 
       // Send confirmation email to guest
       try {
@@ -490,22 +540,23 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to: formData.email,
-            subject: `Booking Request Received - NEMSU Hotel (ID: ${bookingRef.id})`,
-            html: await import('@/lib/emailTemplates').then(mod =>
-              mod.generateBookingConfirmationEmail(
-                `${formData.name} ${formData.surname}`,
-                bookingRef.id,
-                formData.room,
-                new Date(formData.checkIn).toLocaleDateString('en-US', {
-                  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-                }),
-                new Date(formData.checkOut).toLocaleDateString('en-US', {
-                  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-                }),
-                parseInt(formData.guests)
-              )
-            ),
-            type: 'confirmation'
+            type: 'confirmation',
+            bookingId: bookingRef.id,
+            guestName: `${formData.name} ${formData.surname}`.trim(),
+            roomType: formData.room,
+            checkIn: new Date(formData.checkIn).toLocaleDateString('en-US', {
+              weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+            }),
+            checkOut: new Date(formData.checkOut).toLocaleDateString('en-US', {
+              weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+            }),
+            guests: parseInt(formData.guests, 10),
+            hotelName,
+            contactEmail,
+            contactPhone,
+            checkInTime: defaultCheckInTime,
+            checkOutTime: defaultCheckOutTime,
+            currency,
           })
         });
 
@@ -520,7 +571,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
       Swal.fire({
         icon: 'success',
         title: 'Booking Submitted!',
-        html: `<div class="text-left"><p><strong>Booking ID:</strong> ${bookingRef.id}</p><p><strong>Confirmation will be sent to:</strong> ${formData.email}</p><p class="text-sm text-gray-600 mt-2">We'll contact you soon with booking confirmation.</p></div>`,
+        html: `<div class="text-left"><p><strong>Booking ID:</strong> ${bookingRef.id}</p><p><strong>Confirmation will be sent to:</strong> ${formData.email}</p><p><strong>Total Amount:</strong> ${formatCurrency(payment.total, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>${couponMeta ? `<p><strong>Coupon Applied:</strong> ${couponMeta.title} (${couponMeta.discountPercent}% OFF)</p>` : ''}<p class="text-sm text-gray-600 mt-2">We'll contact you soon with booking confirmation.</p></div>`,
         confirmButtonColor: '#3b82f6'
       });
 
@@ -546,6 +597,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
         checkOut: "",
         room: selectedRoom || "",
         guests: "1",
+        couponId: selectedCouponId && isCouponId(selectedCouponId) ? selectedCouponId : "",
         message: "",
       });
 
@@ -625,7 +677,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                   <p className="text-xs sm:text-sm font-semibold text-blue-600 mb-1">Selected Room</p>
                   <h3 className="text-lg sm:text-xl md:text-2xl font-bold text-blue-900 mb-2">{formData.room}</h3>
                   <div className="flex items-baseline gap-2 mb-2 sm:mb-3">
-                    <span className="text-2xl sm:text-3xl font-bold text-blue-900">₱{selectedRoomData.price}</span>
+                    <span className="text-2xl sm:text-3xl font-bold text-blue-900">{formatCurrency(selectedRoomData.price, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     {selectedRoomData.perBed && (
                       <span className="text-xs sm:text-sm text-gray-600">{selectedRoomData.perBed}</span>
                     )}
@@ -643,24 +695,34 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                       </div>
                       {selectedRoomData.perBed && (
                         <div className="flex justify-between items-center mb-1">
-                          <span className="text-xs text-gray-500 italic">Price per bed × guests × nights</span>
+                          <span className="text-xs text-gray-500 italic">Price per bed x guests x nights</span>
                         </div>
                       )}
                       {extraGuests > 0 && !selectedRoomData.perBed && (
                         <>
                           <div className="flex justify-between items-center mb-1 text-orange-600 text-xs sm:text-sm">
                             <span>Extra guests ({extraGuests}):</span>
-                            <span className="font-semibold">₱{EXTRA_GUEST_FEE} × {extraGuests} × {nights} nights</span>
+                            <span className="font-semibold">{formatCurrency(EXTRA_GUEST_FEE, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} x {extraGuests} x {nights} nights</span>
                           </div>
                           <div className="flex justify-between items-center mb-1 text-orange-600 text-xs sm:text-sm">
                             <span className="font-semibold">Extra guest fee:</span>
-                            <span className="font-bold">₱{extraGuestFee.toLocaleString()}</span>
+                            <span className="font-bold">{formatCurrency(extraGuestFee, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                         </>
                       )}
+                      {couponDiscount > 0 && activeCouponId && (
+                        <div className="flex justify-between items-center mb-1 text-green-700 text-xs sm:text-sm">
+                          <span>
+                            Coupon ({activeCoupon?.discountPercent || 0}% OFF):
+                          </span>
+                          <span className="font-bold">{formatCurrency(-couponDiscount, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between items-center pt-2 border-t border-blue-200">
-                        <span className="text-sm sm:text-md font-semibold text-gray-700">Total Amount:</span>
-                        <span className="text-xl sm:text-2xl font-bold text-amber-500">₱{totalPrice.toLocaleString()}</span>
+                        <span className="text-sm sm:text-md font-semibold text-gray-700">
+                          {couponDiscount > 0 ? 'Final Total:' : 'Total Amount:'}
+                        </span>
+                        <span className="text-xl sm:text-2xl font-bold text-amber-500">{formatCurrency(totalPrice, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     </div>
                   )}
@@ -993,11 +1055,6 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
             </div>
           </div>
 
-          {dateConflict && (
-            <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm">
-              {dateConflict} Checkout day is free for a new check-in.
-            </div>
-          )}
           {maintenanceConflict && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm">
               {maintenanceConflict}
@@ -1024,7 +1081,7 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                 ) : (
                   rooms.map((room) => (
                     <option key={room.id || room.name} value={room.name}>
-                      {room.name} - ₱{room.price}{room.perBed ? room.perBed : ''}
+                      {room.name} - {formatCurrency(room.price, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}{room.perBed ? room.perBed : ''}
                     </option>
                   ))
                 )}
@@ -1069,6 +1126,36 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
 
           <div>
             <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
+              Coupon <span className="text-gray-400 font-normal">(Optional)</span>
+            </label>
+            <select
+              name="couponId"
+              value={formData.couponId}
+              onChange={handleChange}
+              className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm rounded-lg border border-gray-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
+            >
+              <option value="">No coupon</option>
+              {coupons.map((coupon) => {
+                const availability = availabilityMap[coupon.id] || getCouponAvailability(coupon);
+                return (
+                  <option key={coupon.id} value={coupon.id} disabled={!availability.active}>
+                    {coupon.title} - {coupon.discountPercent}% OFF{availability.active ? '' : ' (Unavailable now)'}
+                  </option>
+                );
+              })}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              One coupon only per guest identity (name/contact/address), one-time use.
+            </p>
+            {activeCouponId && !activeCouponAvailability?.active && (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {activeCouponAvailability?.reason || 'Coupon cannot be used right now.'} Today in Asia/Manila: {getCouponNowLabel()}.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
               Special Requests
             </label>
             <textarea
@@ -1090,8 +1177,8 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
               <div>
                 <h4 className="font-bold text-amber-900 mb-1 text-xs sm:text-sm">Booking Confirmation Required</h4>
                 <p className="text-xs sm:text-sm text-amber-800">
-                  Your booking will be submitted as <span className="font-semibold">pending</span> and requires admin confirmation.
-                  Once confirmed by our staff, your room will be officially reserved and blocked for your dates.
+                  Your booking will be submitted as <span className="font-semibold">pending</span> and requires staff confirmation.
+                  Once confirmed by our staff, you will be notified via email and your room will be officially reserved and blocked for your dates.
                 </p>
               </div>
             </div>
@@ -1124,17 +1211,17 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                 <div className="py-2 border-t border-b border-blue-300 bg-blue-50 px-2 rounded">
                   <div className="flex justify-between items-center mb-1">
                     <span className="text-gray-700 font-medium">Rate per night:</span>
-                    <span className="text-blue-900 font-semibold">₱{selectedRoomData.price.toLocaleString()}</span>
+                    <span className="text-blue-900 font-semibold">{formatCurrency(selectedRoomData.price, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   {selectedRoomData?.perBed ? (
                     <div className="text-xs text-gray-600 italic flex justify-between items-center">
-                      <span>(per bed × {formData.guests} guests × {nights} nights)</span>
-                      <span className="text-blue-900 font-semibold">₱{(selectedRoomData.price * parseInt(formData.guests) * nights).toLocaleString()}</span>
+                      <span>(per bed x {formData.guests} guests x {nights} nights)</span>
+                      <span className="text-blue-900 font-semibold">{formatCurrency(selectedRoomData.price * parseInt(formData.guests) * nights, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                   ) : (
                     <div className="text-xs text-gray-600 italic flex justify-between items-center">
-                      <span>(₱{selectedRoomData.price.toLocaleString()} × {nights} {nights === 1 ? 'night' : 'nights'})</span>
-                      <span className="text-blue-900 font-semibold">₱{(selectedRoomData.price * nights).toLocaleString()}</span>
+                      <span>({formatCurrency(selectedRoomData.price, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} x {nights} {nights === 1 ? 'night' : 'nights'})</span>
+                      <span className="text-blue-900 font-semibold">{formatCurrency(selectedRoomData.price * nights, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                   )}
                 </div>
@@ -1144,19 +1231,30 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
                   <>
                     <div className="flex justify-between items-center py-2 border-b border-orange-200 bg-orange-50 px-3 rounded">
                       <span className="text-orange-700 font-medium">Extra guests ({extraGuests}):</span>
-                      <span className="text-orange-800 font-semibold">₱{EXTRA_GUEST_FEE} × {extraGuests} × {nights}</span>
+                      <span className="text-orange-800 font-semibold">{formatCurrency(EXTRA_GUEST_FEE, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} x {extraGuests} x {nights}</span>
                     </div>
                     <div className="flex justify-between items-center py-2 border-b border-orange-200 bg-orange-50 px-3 rounded">
                       <span className="text-orange-700 font-medium">Extra guest fee:</span>
-                      <span className="text-orange-800 font-bold">₱{extraGuestFee.toLocaleString()}</span>
+                      <span className="text-orange-800 font-bold">{formatCurrency(extraGuestFee, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                   </>
                 )}
 
+                {couponDiscount > 0 && activeCouponId && (
+                  <div className="flex justify-between items-center py-2 border-b border-green-200 bg-green-50 px-3 rounded">
+                    <span className="text-green-700 font-medium">
+                      Coupon ({activeCoupon?.discountPercent || 0}% OFF):
+                    </span>
+                    <span className="text-green-800 font-bold">{formatCurrency(-couponDiscount, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+
                 {/* Total */}
                 <div className="flex justify-between items-center py-2 sm:py-3 mt-2 bg-amber-100 rounded-lg px-3">
-                  <span className="text-gray-800 font-bold text-sm sm:text-base">Total Amount:</span>
-                  <span className="text-lg sm:text-2xl font-bold text-amber-600">₱{totalPrice.toLocaleString()}</span>
+                  <span className="text-gray-800 font-bold text-sm sm:text-base">
+                    {couponDiscount > 0 ? 'Final Total:' : 'Total Amount:'}
+                  </span>
+                  <span className="text-lg sm:text-2xl font-bold text-amber-600">{formatCurrency(totalPrice, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               </div>
             </div>
@@ -1164,8 +1262,14 @@ export default function BookingModal({ isOpen, onClose, selectedRoom }: BookingM
 
           <button
             type="submit"
-            disabled={!!dateConflict || !!maintenanceConflict || loading || !range?.from || !range?.to}
-            className={`btn-book-now w-full justify-center text-sm sm:text-base md:text-lg ${(dateConflict || maintenanceConflict) ? 'opacity-60 cursor-not-allowed' : ''}`}
+            disabled={
+              !!maintenanceConflict ||
+              loading ||
+              !range?.from ||
+              !range?.to ||
+              (activeCouponId ? !activeCouponAvailability?.active : false)
+            }
+            className={`btn-book-now w-full justify-center text-sm sm:text-base md:text-lg ${maintenanceConflict ? 'opacity-60 cursor-not-allowed' : ''}`}
           >
             BOOK NOW
           </button>

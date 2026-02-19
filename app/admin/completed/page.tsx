@@ -29,7 +29,7 @@ export default function Completed() {
   const { isAuthenticated } = useProtectedAdminPage();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'checkins' | 'checkouts' | 'cancelled' | 'completed'>('checkins');
+  const [activeTab, setActiveTab] = useState<'checkins' | 'pending' | 'checkouts' | 'cancelled' | 'completed'>('checkins');
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -79,13 +79,19 @@ export default function Completed() {
     }
   };
 
-  // Check-ins: Guests arriving today (check-in date is today)
+  // Check-ins: confirmed guests currently checked in (checkIn <= today < checkOut)
   const checkIns = bookings.filter(b => {
     const checkInDate = parseBookingDate(b.checkIn);
-    if (!checkInDate) return false;
+    const checkOutDate = parseBookingDate(b.checkOut);
+    if (!checkInDate || !checkOutDate) return false;
     checkInDate.setHours(0, 0, 0, 0);
-    return checkInDate.getTime() === today.getTime() && (b.status === 'confirmed' || b.status === 'pending');
+    checkOutDate.setHours(0, 0, 0, 0);
+    const checkInTime = checkInDate.getTime();
+    const checkOutTime = checkOutDate.getTime();
+    return b.status === 'confirmed' && checkInTime <= today.getTime() && checkOutTime > today.getTime();
   });
+
+  const pending = bookings.filter(b => b.status === 'pending');
 
   // Check-outs: Guests leaving today (check-out date is today)
   const checkOuts = bookings.filter(b => {
@@ -116,6 +122,8 @@ export default function Completed() {
     switch (activeTab) {
       case 'checkins':
         return checkIns;
+      case 'pending':
+        return pending;
       case 'checkouts':
         return [...checkOuts, ...pastCheckOuts];
       case 'cancelled':
@@ -136,7 +144,7 @@ export default function Completed() {
 
       <AdminMainContent>
         {/* Header */}
-        <div className="mb-6">
+        <div className="admin-page-header mb-6">
           <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
             Completed & Activity
           </h1>
@@ -146,11 +154,17 @@ export default function Completed() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Today&apos;s Check-ins</p>
             <p className="text-3xl font-semibold text-gray-900 dark:text-white">{checkIns.length}</p>
-            <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Guests arriving today</p>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Confirmed and currently in-house</p>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Pending</p>
+            <p className="text-3xl font-semibold text-gray-900 dark:text-white">{pending.length}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Awaiting confirmation</p>
           </div>
 
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
@@ -185,6 +199,16 @@ export default function Completed() {
             Check-ins ({checkIns.length})
           </button>
           <button
+            onClick={() => setActiveTab('pending')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'pending'
+                ? 'bg-amber-500 text-white'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            Pending ({pending.length})
+          </button>
+          <button
             onClick={() => setActiveTab('checkouts')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'checkouts'
@@ -217,7 +241,7 @@ export default function Completed() {
         </div>
 
         {/* Content */}
-        <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-2xl shadow-xl overflow-hidden border border-gray-200/50 dark:border-gray-700/50 hover:shadow-2xl transition-all duration-300">
+        <div className="admin-table-shell bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-2xl shadow-xl overflow-hidden border border-gray-200/50 dark:border-gray-700/50 hover:shadow-2xl transition-all duration-300">
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <LoadingSpinner size="lg" text="Loading bookings..." />
@@ -228,7 +252,9 @@ export default function Completed() {
                 title="No records found"
                 description={
                   activeTab === 'checkins'
-                    ? "No check-ins scheduled for today. Bookings with today's check-in date will appear here."
+                    ? "No confirmed guests are currently checked in."
+                    : activeTab === 'pending'
+                    ? "No pending bookings found. Reservations awaiting approval will appear here."
                     : activeTab === 'checkouts'
                     ? "No check-outs in the last 30 days. Guests who checked out recently will appear here."
                     : activeTab === 'cancelled'
@@ -244,7 +270,7 @@ export default function Completed() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="admin-data-table w-full">
                 <thead>
                   <tr className="bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white">
                     <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider">#</th>
@@ -286,11 +312,19 @@ export default function Completed() {
                         <span className={`px-2 py-1 rounded text-xs font-medium ${
                           booking.status === 'confirmed'
                             ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                            : booking.status === 'pending'
+                            ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
                             : booking.status === 'completed'
                             ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
                             : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
                         }`}>
-                          {booking.status === 'confirmed' ? 'Confirmed' : booking.status === 'completed' ? 'Completed' : 'Cancelled'}
+                          {booking.status === 'confirmed'
+                            ? 'Confirmed'
+                            : booking.status === 'pending'
+                            ? 'Pending'
+                            : booking.status === 'completed'
+                            ? 'Completed'
+                            : 'Cancelled'}
                         </span>
                       </td>
                     </tr>

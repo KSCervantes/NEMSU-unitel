@@ -6,6 +6,7 @@ import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
+import { useAdminCurrency } from '../hooks/useAdminCurrency';
 import { db } from '@/lib/firebase';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 
@@ -14,6 +15,8 @@ type BookingPayment = {
   total?: number | string;
   basePrice?: number | string;
   extraFee?: number | string;
+  subtotal?: number | string;
+  couponDiscount?: number | string;
   nights?: number;
 };
 
@@ -29,10 +32,17 @@ type RevenueBooking = {
   room?: string;
   guests?: number | string;
   nights?: number;
+  coupon?: {
+    applied?: boolean;
+    id?: string;
+    title?: string;
+    discountPercent?: number;
+  };
 };
 
 export default function Revenue() {
   const { isAuthenticated } = useProtectedAdminPage();
+  const { formatCurrency } = useAdminCurrency(isAuthenticated);
   const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
   const [allBookings, setAllBookings] = useState<RevenueBooking[]>([]);
   const [availableYears, setAvailableYears] = useState<number[]>([]);
@@ -63,6 +73,7 @@ export default function Revenue() {
             checkOut: data.checkOut,
             room: data.room,
             guests: data.guests,
+            coupon: data.coupon,
           });
         }
       });
@@ -155,7 +166,7 @@ export default function Revenue() {
     }
 
     // Prepare CSV headers
-    const headers = ['Booking ID', 'Room', 'Guests', 'Check-in Date', 'Check-out Date', 'Nights', 'Base Price', 'Extra Fee', 'Total Revenue', 'Date Confirmed'];
+    const headers = ['Booking ID', 'Room', 'Guests', 'Check-in Date', 'Check-out Date', 'Nights', 'Base Price', 'Extra Fee', 'Coupon', 'Coupon Discount', 'Total Revenue', 'Date Confirmed'];
 
     // Prepare CSV rows
     const rows = filteredBookings.map(booking => {
@@ -174,6 +185,8 @@ export default function Revenue() {
         booking.payment?.nights || booking.nights || '',
         booking.payment?.basePrice || '',
         booking.payment?.extraFee || '0',
+        booking.coupon?.applied ? `${booking.coupon.title || booking.coupon.id || ''} (${booking.coupon.discountPercent || 0}% OFF)` : '',
+        booking.payment?.couponDiscount || '0',
         booking.payment?.total || booking.totalPrice || booking.totalAmount || '0',
         booking.createdAt.toLocaleDateString() + ' ' + booking.createdAt.toLocaleTimeString()
       ];
@@ -220,7 +233,7 @@ export default function Revenue() {
 
       <AdminMainContent>
         {/* Header */}
-        <div className="mb-6">
+        <div className="admin-page-header mb-6">
           <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
             Revenue
           </h1>
@@ -319,7 +332,7 @@ export default function Revenue() {
               </div>
             </div>
             <div className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-              ₱{totalRevenue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCurrency(totalRevenue, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <div className="text-sm text-gray-500 dark:text-gray-400">
               {filterPeriod === 'all' && 'From all confirmed bookings'}
@@ -375,8 +388,8 @@ export default function Revenue() {
                 <p className="text-sm font-medium text-gray-900 dark:text-white">Average Revenue per Booking</p>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
                   {confirmedBookings > 0
-                    ? `₱${(totalRevenue / confirmedBookings).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : '₱0.00'
+                    ? formatCurrency(totalRevenue / confirmedBookings, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : formatCurrency(0, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                   }
                 </p>
               </div>

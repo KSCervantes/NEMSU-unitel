@@ -1,15 +1,18 @@
-"use client";
+﻿"use client";
 export const dynamic = "force-dynamic";
 
 import Image from "next/image";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Navbar from "./components/Navbar";
-import GalaxyBackground from "./components/GalaxyBackground";
 import RoomCard from "./components/RoomCard";
 import BookingModal from "./components/BookingModal";
+import { useCoupons } from '@/app/hooks/useCoupons';
+import { useHotelSettings } from '@/app/hooks/useHotelSettings';
 import { db } from '@/lib/firebase';
 import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 import { logError } from '@/lib/logger';
+import { CouponId, formatCouponDate, getCouponAvailability, getCouponNowLabel, isCouponId } from '@/lib/coupons';
+import { getCouponIconMeta } from '@/lib/couponIcons';
 
 interface Room {
   id?: string;
@@ -28,6 +31,14 @@ export default function Home() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [isCouponModalOpen, setIsCouponModalOpen] = useState(false);
+  const [selectedCoupon, setSelectedCoupon] = useState<CouponId | "">("");
+  const [selectedBookingCoupon, setSelectedBookingCoupon] = useState<CouponId | "">("");
+  const [activeCouponIndex, setActiveCouponIndex] = useState(0);
+  const [activeRoomIndex, setActiveRoomIndex] = useState(0);
+  const couponCarouselRef = useRef<HTMLDivElement | null>(null);
+  const roomCarouselRef = useRef<HTMLDivElement | null>(null);
+  const { settings: hotelSettings } = useHotelSettings(true);
 
   const fetchRooms = async () => {
     try {
@@ -71,7 +82,7 @@ export default function Home() {
     };
     fetchData();
 
-    // Real-time listeners for maintenance and bookings
+    // Real-time listener for maintenance
     const maintenanceRef = collection(db, 'maintenance');
     type MaintenanceDoc = { room?: string; status?: string };
     const maintenanceQuery = query(maintenanceRef, where('status', 'in', ['pending', 'in-progress']));
@@ -88,22 +99,14 @@ export default function Home() {
       logError(error, { context: 'Home - Maintenance listener error' });
     });
 
-    // Occupancy doc type not used while listener is noop
-    const bookingsRef = collection(db, 'bookings');
-    const unsubscribeBookings = onSnapshot(bookingsRef, () => {
-      // Occupancy tracking is currently unused in UI; skip processing
-    }, (error) => {
-      logError(error, { context: 'Home - Bookings listener error' });
-    });
-
     return () => {
       unsubscribeMaintenance();
-      unsubscribeBookings();
     };
   }, []);
 
   const handleBookRoom = (roomName: string) => {
     setSelectedRoom(roomName);
+    setSelectedBookingCoupon("");
     setIsBookingModalOpen(true);
   };
 
@@ -111,58 +114,295 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const { coupons, couponMap, availabilityMap, loading: couponsLoading } = useCoupons(true);
+
+  const getCouponAvailabilityById = (couponId: CouponId) => {
+    const coupon = couponMap[couponId];
+    if (!coupon) return getCouponAvailability(null);
+    return availabilityMap[couponId] || getCouponAvailability(coupon);
+  };
+
+  const handleClaimCoupon = (couponId: CouponId) => {
+    const coupon = couponMap[couponId];
+    if (!coupon) {
+      return;
+    }
+
+    const availability = getCouponAvailabilityById(couponId);
+    if (!availability.active) {
+      return;
+    }
+
+    setSelectedRoom("");
+    setSelectedBookingCoupon(couponId);
+    setIsBookingModalOpen(true);
+  };
+
+  const handleCouponAbout = (couponId: CouponId) => {
+    if (!couponMap[couponId]) {
+      return;
+    }
+    setSelectedCoupon(couponId);
+    setIsCouponModalOpen(true);
+  };
+
+  const selectedCouponId = selectedCoupon && couponMap[selectedCoupon] ? selectedCoupon : "";
+  const selectedBookingCouponId = selectedBookingCoupon && couponMap[selectedBookingCoupon] ? selectedBookingCoupon : "";
+  const selectedCouponData = selectedCouponId ? couponMap[selectedCouponId] || null : null;
+  const selectedCouponAvailability = selectedCouponId ? getCouponAvailabilityById(selectedCouponId) : null;
+  const couponCards = useMemo(() => {
+    return coupons.map((coupon, index) => {
+      const iconMeta = getCouponIconMeta(coupon.iconKey, index);
+      const availability = availabilityMap[coupon.id] || getCouponAvailability(coupon);
+      return {
+        id: coupon.id,
+        discount: `${coupon.discountPercent}% OFF`,
+        title: coupon.title,
+        subtitle: coupon.shortDescription || coupon.description || availability.availabilityText,
+        discountClass: iconMeta.discountClass,
+        iconClass: iconMeta.iconClass,
+        iconPath: iconMeta.path,
+      };
+    });
+  }, [availabilityMap, coupons]);
+  const selectedCouponCard = selectedCouponId ? couponCards.find((coupon) => coupon.id === selectedCouponId) || null : null;
+
+  const handleCouponCarouselScroll = () => {
+    const container = couponCarouselRef.current;
+    if (!container) {
+      return;
+    }
+
+    const cards = Array.from(container.children) as HTMLElement[];
+    if (cards.length === 0) {
+      return;
+    }
+
+    const viewportCenter = container.scrollLeft + container.clientWidth / 2;
+    let closestIndex = 0;
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    cards.forEach((card, index) => {
+      const cardCenter = card.offsetLeft + card.clientWidth / 2;
+      const distance = Math.abs(cardCenter - viewportCenter);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = index;
+      }
+    });
+
+    if (closestIndex !== activeCouponIndex) {
+      setActiveCouponIndex(closestIndex);
+    }
+  };
+
+  const scrollToCouponCard = (index: number) => {
+    const container = couponCarouselRef.current;
+    if (!container) {
+      return;
+    }
+
+    const target = container.children[index] as HTMLElement | undefined;
+    if (!target) {
+      return;
+    }
+
+    target.scrollIntoView({
+      behavior: 'smooth',
+      inline: 'center',
+      block: 'nearest',
+    });
+    setActiveCouponIndex(index);
+  };
+
+  const handleRoomCarouselScroll = () => {
+    const container = roomCarouselRef.current;
+    if (!container) {
+      return;
+    }
+
+    const cards = Array.from(container.children) as HTMLElement[];
+    if (cards.length === 0) {
+      return;
+    }
+
+    const viewportCenter = container.scrollLeft + container.clientWidth / 2;
+    let closestIndex = 0;
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    cards.forEach((card, index) => {
+      const cardCenter = card.offsetLeft + card.clientWidth / 2;
+      const distance = Math.abs(cardCenter - viewportCenter);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = index;
+      }
+    });
+
+    if (closestIndex !== activeRoomIndex) {
+      setActiveRoomIndex(closestIndex);
+    }
+  };
+
+  const scrollToRoomCard = (index: number) => {
+    const container = roomCarouselRef.current;
+    if (!container) {
+      return;
+    }
+
+    const target = container.children[index] as HTMLElement | undefined;
+    if (!target) {
+      return;
+    }
+
+    target.scrollIntoView({
+      behavior: 'smooth',
+      inline: 'center',
+      block: 'nearest',
+    });
+    setActiveRoomIndex(index);
+  };
+
+  const renderCouponCard = (
+    coupon: (typeof couponCards)[number],
+    extraClassName = ''
+  ) => {
+    const availability = getCouponAvailabilityById(coupon.id);
+    return (
+      <div
+        key={coupon.id}
+        className={`relative bg-white/60 backdrop-blur-lg rounded-3xl overflow-hidden group hover:shadow-xl transition-all duration-300 shadow-sm p-0 border-0 ${extraClassName}`}
+      >
+        <div className="p-4 pr-24">
+          <div className={`text-2xl font-bold mb-1 ${coupon.discountClass}`}>{coupon.discount}</div>
+          <h3 className="font-poppins font-semibold text-base mb-1 text-gray-800">{coupon.title}</h3>
+          <p className="text-gray-500 text-xs mb-2">{coupon.subtitle}</p>
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={() => handleClaimCoupon(coupon.id)}
+              disabled={!availability.active}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold px-3 py-2 rounded-lg transition-colors text-xs flex-1"
+            >
+              {availability.active ? 'Claim Coupon' : 'Unavailable'}
+            </button>
+            <button
+              onClick={() => handleCouponAbout(coupon.id)}
+              className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-3 py-2 rounded-lg transition-colors text-xs flex items-center justify-center"
+              title="About this offer"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="absolute top-0 right-0 h-full w-20 border-l-2 border-dashed border-gray-300 bg-white flex items-center justify-center">
+          <div className="absolute -top-3 -left-3 w-6 h-6 bg-gray-50 rounded-full border border-gray-200"></div>
+          <div className="absolute -bottom-3 -left-3 w-6 h-6 bg-gray-50 rounded-full border border-gray-200"></div>
+          <div className={coupon.iconClass}>
+            <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={coupon.iconPath} />
+            </svg>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Always show all rooms; we'll indicate unavailable state on the card
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar onBookNowClick={() => setIsBookingModalOpen(true)} />
+      <Navbar hotelName={hotelSettings.hotelName} />
 
       {/* Hero Section */}
       <section
         id="home"
-        className="relative min-h-screen flex items-center justify-center pt-32 sm:pt-40 md:pt-48 pb-12"
-        style={{ backgroundColor: '#112240' }}
+        className="relative min-h-[56vh] md:min-h-[62vh] lg:min-h-[78vh] flex items-center justify-center pt-16 sm:pt-20 md:pt-24 pb-12 bg-blend-overlay bg-gradient-to-b from-[#112240]/70 via-[#1a2a4f]/45 to-[#e0e7ef]/80 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage: 'linear-gradient(to bottom, rgba(17, 34, 64, 0.62) 0%, rgba(26, 42, 79, 0.40) 60%, rgba(224, 231, 239, 0.82) 100%), url("/img/hero-bg.webp")',
+          backgroundColor: '#1a2f55'
+        }}
       >
-        {/* Galaxy background canvas, blended softly behind hero content */}
-        <GalaxyBackground />
-        {/* Subtle overlay to improve contrast */}
-      <div className="absolute inset-0 bg-linear-to-b from-[#0b1433]/40 via-transparent to-[#112240]/60" />
+        {/* Minimal overlay so the image stays bright and visible */}
+        <div className="absolute inset-0 bg-black/10" />
         <div className="relative z-10 text-center text-white px-4 sm:px-6 max-w-6xl mx-auto w-full">
-          <div className="mb-6 sm:mb-8 md:mb-10 animate-fadeIn">
-          </div>
-          <h1 className="font-poppins font-extrabold text-3xl sm:text-4xl md:text-5xl lg:text-6xl xl:text-8xl mb-4 sm:mb-6 animate-slideDown leading-tight">
-            Experience Luxury<br />
-            <span className="text-amber-400">&</span> Comfort
+          <h1 className="font-poppins font-bold mb-4 leading-[1.05]">
+            <span className="block text-[0.68rem] sm:text-sm md:text-base lg:text-xl font-medium uppercase tracking-[0.24em] sm:tracking-[0.26em] lg:tracking-[0.28em] text-white/85 mb-1.5 sm:mb-2 drop-shadow-[0_2px_10px_rgba(0,0,0,0.4)]">
+              Welcome to
+            </span>
+            <span className="hero-hotel-wordmark block text-[2.2rem] sm:text-5xl md:text-6xl lg:text-[5.2rem] xl:text-[5.8rem] tracking-[0.02em] sm:tracking-[0.024em] lg:tracking-[0.03em]">
+              <span className="hero-hotel-wordmark-accent">NEMSU</span> UNIVERSITY HOTEL
+            </span>
+            <span className="mx-auto mt-3 sm:mt-4 block h-[2px] w-24 sm:w-32 lg:w-36 bg-gradient-to-r from-transparent via-amber-300/90 to-transparent" />
           </h1>
-          <p
-            className="text-sm sm:text-base md:text-lg mb-6 sm:mb-8 md:mb-10 max-w-3xl mx-auto animate-slideUp leading-relaxed p-4 sm:p-5 md:p-6 rounded-xl sm:rounded-2xl border-2 border-white/20 bg-white/5 backdrop-blur-sm"
-            style={{ animationDelay: "0.4s", borderColor: 'rgba(255, 255, 255, 0.2)' }}
-          >
-            Welcome to NEMSU Hotel, where academic excellence meets hospitality. Our doors are open to students, faculty, and valued guests from all walks of life. Experience our high-class accommodations today.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center animate-slideUp px-2" style={{ animationDelay: "0.6s" }}>
-            <button
-              onClick={() => {
-                const contactSection = document.getElementById('contact');
-                contactSection?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="btn-book-now w-full sm:w-auto inline-flex items-center justify-center gap-2"
-            >
-              Contact Us
-              <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
-            </button>
-            <button
-              onClick={() => {
-                const roomsSection = document.getElementById('rooms');
-                roomsSection?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="btn-book-now w-full sm:w-auto inline-flex items-center justify-center gap-2"
-            >
-              Explore Our Rooms
-            </button>
+        </div>
+      </section>
+
+      {/* Discounts Section */}
+      <section className="relative py-12 px-4 dotted-bg shadow-xl border-t border-[#b6c3d6]/40">
+        <div className="container mx-auto max-w-7xl">
+          <div className="text-left mb-8">
+            <h2 className="font-poppins font-bold text-2xl md:text-2xl mb-3" style={{ color: '#112240' }}>
+              Special Offers & Discounts
+            </h2>
           </div>
+
+          {couponsLoading ? (
+            <div className="rounded-2xl border border-gray-200 bg-white/60 p-6 text-sm text-gray-600">
+              Loading offers...
+            </div>
+          ) : couponCards.length === 0 ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-800">
+              No coupons are configured right now. Please check back later.
+            </div>
+          ) : (
+            <>
+              <div className="md:hidden">
+                <div
+                  ref={couponCarouselRef}
+                  onScroll={handleCouponCarouselScroll}
+                  className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                >
+                  {couponCards.map((coupon) => renderCouponCard(coupon, 'shrink-0 basis-[86%] snap-center'))}
+                </div>
+                {couponCards.length > 1 && (
+                  <div className="mt-4 flex items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => scrollToCouponCard((activeCouponIndex - 1 + couponCards.length) % couponCards.length)}
+                      className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                    >
+                      Prev
+                    </button>
+                    <div className="flex items-center gap-2">
+                      {couponCards.map((coupon, index) => (
+                        <button
+                          key={coupon.id}
+                          type="button"
+                          onClick={() => scrollToCouponCard(index)}
+                          aria-label={`Go to ${coupon.title} coupon`}
+                          className={`h-2.5 rounded-full transition-all ${activeCouponIndex === index ? 'w-6 bg-blue-700' : 'w-2.5 bg-gray-300'}`}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => scrollToCouponCard((activeCouponIndex + 1) % couponCards.length)}
+                      className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {couponCards.map((coupon) => renderCouponCard(coupon))}
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -179,7 +419,7 @@ export default function Home() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-6 mb-12">
+          <div className="mb-12">
             {loading ? (
               <div className="flex items-center justify-center py-20">
                 <div className="text-center">
@@ -196,19 +436,79 @@ export default function Home() {
                 <p className="text-gray-600">Please check back later.</p>
               </div>
             ) : (
-              rooms.map((room) => (
-                <RoomCard
-                  key={room.id || room.name}
-                  name={room.name}
-                  price={room.price}
-                  image={room.image}
-                  description={room.description}
-                  perBed={room.perBed}
-                  onClick={() => handleBookRoom(room.name)}
-                  unavailable={roomsUnderMaintenance.includes(room.name)}
-                  unavailableReason={roomsUnderMaintenance.includes(room.name) ? 'maintenance' : undefined}
-                />
-              ))
+              <>
+                <div className="md:hidden">
+                  <div
+                    ref={roomCarouselRef}
+                    onScroll={handleRoomCarouselScroll}
+                    className="flex gap-4 overflow-x-auto pb-3 snap-x snap-mandatory scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  >
+                    {rooms.map((room) => (
+                      <div key={room.id || room.name} className="shrink-0 basis-[88%] snap-center">
+                        <RoomCard
+                          name={room.name}
+                          price={room.price}
+                          currency={hotelSettings.currency}
+                          image={room.image}
+                          description={room.description}
+                          perBed={room.perBed}
+                          onClick={() => handleBookRoom(room.name)}
+                          unavailable={roomsUnderMaintenance.includes(room.name)}
+                          unavailableReason={roomsUnderMaintenance.includes(room.name) ? 'maintenance' : undefined}
+                          mobileVertical
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  {rooms.length > 1 && (
+                    <div className="mt-4 flex items-center justify-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => scrollToRoomCard((activeRoomIndex - 1 + rooms.length) % rooms.length)}
+                        className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                      >
+                        Prev
+                      </button>
+                      <div className="flex items-center gap-2">
+                        {rooms.map((room, index) => (
+                          <button
+                            key={room.id || room.name}
+                            type="button"
+                            onClick={() => scrollToRoomCard(index)}
+                            aria-label={`Go to ${room.name}`}
+                            className={`h-2.5 rounded-full transition-all ${activeRoomIndex === index ? 'w-6 bg-blue-700' : 'w-2.5 bg-gray-300'}`}
+                          />
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => scrollToRoomCard((activeRoomIndex + 1) % rooms.length)}
+                        className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="hidden md:flex md:flex-col gap-6">
+                  {rooms.map((room) => (
+                    <RoomCard
+                      key={room.id || room.name}
+                      name={room.name}
+                      price={room.price}
+                      currency={hotelSettings.currency}
+                      image={room.image}
+                      description={room.description}
+                      perBed={room.perBed}
+                      onClick={() => handleBookRoom(room.name)}
+                      unavailable={roomsUnderMaintenance.includes(room.name)}
+                      unavailableReason={roomsUnderMaintenance.includes(room.name) ? 'maintenance' : undefined}
+                    />
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -220,15 +520,15 @@ export default function Home() {
           <div className="grid md:grid-cols-2 gap-12 items-center">
             <div>
               <h2 className="font-poppins font-bold text-4xl md:text-5xl text-blue-900 mb-6" style={{ color: '#112240' }}>
-                Welcome to UNITEL
+                Welcome to {hotelSettings.hotelName}
               </h2>
               <div className="w-24 h-1 bg-amber-400 mb-6" />
               <p className="text-gray-600 text-lg mb-6 leading-relaxed">
-                UNITEL NEMSU University Hotel offers a unique blend of comfort, convenience, and
-                affordability right at the heart of NEMSU-Lianga Campus in Poblacion, Lianga, Surigao del Sur.
+                {hotelSettings.hotelName} offers a unique blend of comfort, convenience, and
+                affordability at the heart of {hotelSettings.address}.
               </p>
               <p className="text-gray-600 text-lg mb-6 leading-relaxed">
-                Whether you’re a visiting professor, student’s family member, or traveler exploring
+                Whether you&apos;re a visiting professor, student&apos;s family member, or traveler exploring
                 the beautiful region, our modern facilities and warm hospitality ensure a memorable stay.
               </p>
               <div className="grid grid-cols-2 gap-4 mb-8">
@@ -320,7 +620,9 @@ export default function Home() {
                 </svg>
               </div>
               <h3 className="font-semibold text-sm sm:text-lg md:text-xl mb-2">Email</h3>
-              <p className="text-black text-xs sm:text-sm md:text-base break-all">hello@nemsu.edu.ph</p>
+              <a href={`mailto:${hotelSettings.contactEmail}`} className="text-black text-xs sm:text-sm md:text-base break-all hover:underline">
+                {hotelSettings.contactEmail}
+              </a>
             </div>
 
             <div className="bg-white/10 backdrop-blur-sm rounded-xl sm:rounded-2xl p-4 sm:p-6 md:p-8 text-center hover:bg-white/20 transition-all">
@@ -330,7 +632,9 @@ export default function Home() {
                 </svg>
               </div>
               <h3 className="font-semibold text-sm sm:text-lg md:text-xl mb-2">Phone</h3>
-              <p className="text-black text-xs sm:text-sm md:text-base">+639123456789</p>
+              <a href={`tel:${hotelSettings.contactPhone.replace(/\s+/g, '')}`} className="text-black text-xs sm:text-sm md:text-base hover:underline">
+                {hotelSettings.contactPhone}
+              </a>
             </div>
 
             <div className="col-span-2 md:col-span-1 bg-white/10 backdrop-blur-sm rounded-xl sm:rounded-2xl p-4 sm:p-6 md:p-8 text-center hover:bg-white/20 transition-all">
@@ -340,7 +644,7 @@ export default function Home() {
                 </svg>
               </div>
               <h3 className="font-semibold text-sm sm:text-lg md:text-xl mb-2">Address</h3>
-              <p className="text-black text-xs sm:text-sm md:text-base">NEMSU-Lianga Campus<br />P-5, Poblacion, Lianga SDS</p>
+              <p className="text-black text-xs sm:text-sm md:text-base whitespace-pre-line">{hotelSettings.address}</p>
             </div>
           </div>
         </div>
@@ -352,7 +656,7 @@ export default function Home() {
           <div className="flex items-center justify-center gap-3 mb-4" suppressHydrationWarning>
             <Image
               src="/img/NEMSU_LOGOO.webp"
-              alt="UNITEL Logo"
+              alt={`${hotelSettings.hotelName} Logo`}
               width={40}
               height={40}
               className="object-contain"
@@ -360,21 +664,134 @@ export default function Home() {
               loading="eager"
             />
             <div>
-              <h3 className="font-poppins font-bold text-xl">UNITEL</h3>
-              <p className="text-sm text-gray-400">University Hotel</p>
+              <h3 className="font-poppins font-bold text-xl">{hotelSettings.hotelName}</h3>
             </div>
           </div>
           <p className="text-gray-400 text-sm">
-            © {new Date().getFullYear()} UNITEL NEMSU University Hotel. All rights reserved.
+            © {new Date().getFullYear()} {hotelSettings.hotelName}. All rights reserved.
           </p>
         </div>
       </footer>
 
       <BookingModal
         isOpen={isBookingModalOpen}
-        onClose={() => setIsBookingModalOpen(false)}
+        onClose={() => {
+          setIsBookingModalOpen(false);
+          setSelectedRoom("");
+          setSelectedBookingCoupon("");
+        }}
         selectedRoom={selectedRoom}
+        selectedCouponId={selectedBookingCouponId}
+        hotelName={hotelSettings.hotelName}
+        currency={hotelSettings.currency}
+        contactEmail={hotelSettings.contactEmail}
+        contactPhone={hotelSettings.contactPhone}
+        defaultCheckInTime={hotelSettings.checkInTime}
+        defaultCheckOutTime={hotelSettings.checkOutTime}
       />
+
+      {/* Coupon Details Modal */}
+      {isCouponModalOpen && selectedCouponId && selectedCouponData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2">
+          <div className="bg-white rounded-xl max-w-xs sm:max-w-sm w-full max-h-[80vh] overflow-y-auto shadow-xl">
+            <div className="p-4 sm:p-5">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-lg sm:text-xl font-poppins font-bold text-gray-800 mb-1">
+                    {selectedCouponData.title}
+                  </h2>
+                  <div className={`text-xl sm:text-2xl font-bold ${selectedCouponCard?.discountClass || 'text-blue-600'}`}>
+                    {selectedCouponData.discountPercent}% OFF
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsCouponModalOpen(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors ml-2"
+                  aria-label="Close coupon details"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <p className="text-gray-600 text-sm leading-relaxed">
+                  {selectedCouponData.description || selectedCouponData.shortDescription}
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <h3 className="text-base font-semibold text-gray-800 mb-2">Terms & Conditions</h3>
+                <ul className="space-y-1">
+                  {(selectedCouponData.terms.length > 0 ? selectedCouponData.terms : [
+                    'One coupon redemption per guest identity only.',
+                    'Cannot be combined with other offers.',
+                    'Subject to room availability.',
+                  ]).map((term, index) => (
+                    <li key={index} className="flex items-start gap-2 text-gray-600 text-xs">
+                      <svg className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>{term}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="mb-3 p-2 bg-blue-50 rounded-lg">
+                <div className="flex items-center gap-2 text-blue-800 text-xs">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="font-semibold">
+                    {selectedCouponData.validTo
+                      ? `Valid Until: ${formatCouponDate(selectedCouponData.validTo)}`
+                      : selectedCouponData.validFrom
+                      ? `Valid From: ${formatCouponDate(selectedCouponData.validFrom)}`
+                      : 'Validity: Ongoing'}
+                  </span>
+                </div>
+              </div>
+
+              <div className={`mb-4 p-2 rounded-lg ${selectedCouponAvailability?.active ? 'bg-green-50' : 'bg-amber-50'}`}>
+                <p className={`text-xs font-semibold ${selectedCouponAvailability?.active ? 'text-green-700' : 'text-amber-800'}`}>
+                  {selectedCouponAvailability?.active
+                    ? 'This coupon is active now.'
+                    : `This coupon cannot be used now. ${selectedCouponAvailability?.reason || ''}`}
+                </p>
+                <p className={`text-xs mt-1 ${selectedCouponAvailability?.active ? 'text-green-600' : 'text-amber-700'}`}>
+                  Time reference: Asia/Manila ({getCouponNowLabel()}).
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setIsCouponModalOpen(false)}
+                  className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-3 rounded-lg transition-colors text-xs"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => {
+                    if (!selectedCouponId || !isCouponId(selectedCouponId) || !getCouponAvailabilityById(selectedCouponId).active) {
+                      return;
+                    }
+                    setIsCouponModalOpen(false);
+                    setSelectedRoom("");
+                    setSelectedBookingCoupon(selectedCouponId);
+                    setIsBookingModalOpen(true);
+                  }}
+                  disabled={!selectedCouponId || !selectedCouponAvailability?.active}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-2 px-3 rounded-lg transition-colors text-xs"
+                >
+                  Book Now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Scroll to Top Button */}
       {showScrollTop && (

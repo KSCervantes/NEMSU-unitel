@@ -6,6 +6,7 @@ import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
+import { useAdminCurrency } from '../hooks/useAdminCurrency';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, doc, updateDoc, Timestamp } from 'firebase/firestore';
 import Swal from 'sweetalert2';
@@ -46,6 +47,7 @@ interface MaintenanceTask {
 
 export default function Calendar() {
   const { isAuthenticated, isLoading } = useProtectedAdminPage();
+  const { formatCurrency } = useAdminCurrency(isAuthenticated);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [allBookings, setAllBookings] = useState<Booking[]>([]);
@@ -56,6 +58,8 @@ export default function Calendar() {
   const [maintenanceByDay, setMaintenanceByDay] = useState<{ [key: string]: MaintenanceTask[] }>({});
   const [showMaintenance, setShowMaintenance] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  const getBookingTotal = (booking: Booking) => booking.payment?.total ?? booking.totalPrice ?? null;
 
   const fetchBookings = useCallback(async () => {
     try {
@@ -253,7 +257,7 @@ export default function Calendar() {
   const handleCheckOut = async (booking: Booking) => {
     const result = await Swal.fire({
       title: 'Confirm Check-out',
-      html: `<div class="text-left"><p><strong>${booking.name}</strong></p><p>Room: ${booking.room}</p><p>Total Amount: ₱${parseFloat(booking.totalPrice?.toString() || '0').toLocaleString('en-PH')}</p></div>`,
+      html: `<div class="text-left"><p><strong>${booking.name}</strong></p><p>Room: ${booking.room}</p><p>Total Amount: ${formatCurrency(getBookingTotal(booking) ?? 0)}</p></div>`,
       icon: 'question',
       showCancelButton: true,
       confirmButtonColor: '#28a745',
@@ -368,12 +372,12 @@ export default function Calendar() {
       <Header />
 
       <AdminMainContent>
-        <div className="mb-6">
-          {/* Header */}
           <div className="mb-6">
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Calendar</h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-1">Manage your bookings at a glance</p>
-          </div>
+            {/* Header */}
+            <div className="admin-page-header mb-6">
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Calendar</h1>
+              <p className="text-gray-600 dark:text-gray-400 mt-1">Manage your bookings at a glance</p>
+            </div>
 
           {/* Key Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -593,10 +597,12 @@ export default function Calendar() {
                                   <p className="text-gray-500 dark:text-gray-400">Status</p>
                                   <p className="font-semibold text-gray-900 dark:text-white capitalize">{booking.status}</p>
                                 </div>
-                                {booking.totalPrice && (
+                                {getBookingTotal(booking) !== null && (
                                   <div className="bg-white dark:bg-gray-700/50 rounded p-2">
                                     <p className="text-gray-500 dark:text-gray-400">Total Price</p>
-                                    <p className="font-semibold text-green-600 dark:text-green-400">₱{parseFloat(booking.totalPrice.toString()).toLocaleString('en-PH')}</p>
+                                    <p className="font-semibold text-green-600 dark:text-green-400">
+                                      {formatCurrency(getBookingTotal(booking))}
+                                    </p>
                                   </div>
                                 )}
                               </div>
@@ -682,10 +688,12 @@ export default function Calendar() {
                                   <p className="text-gray-500 dark:text-gray-400">Status</p>
                                   <p className="font-semibold text-gray-900 dark:text-white capitalize">{booking.status}</p>
                                 </div>
-                                {booking.totalPrice && (
+                                {getBookingTotal(booking) !== null && (
                                   <div className="bg-white dark:bg-gray-700/50 rounded p-2">
                                     <p className="text-gray-500 dark:text-gray-400">Total Price</p>
-                                    <p className="font-semibold text-green-600 dark:text-green-400">₱{parseFloat(booking.totalPrice.toString()).toLocaleString('en-PH')}</p>
+                                    <p className="font-semibold text-green-600 dark:text-green-400">
+                                      {formatCurrency(getBookingTotal(booking))}
+                                    </p>
                                   </div>
                                 )}
                               </div>
