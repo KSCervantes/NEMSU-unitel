@@ -194,8 +194,8 @@ button, a, input, select, textarea {
 
 /* Hero wordmark styling for the hotel title */
 .hero-hotel-wordmark {
-  font-family: "Georgia", "Times New Roman", serif;
-  font-weight: 700;
+  font-family: var(--font-permanent-marker), "Permanent Marker", cursive;
+  font-weight: 400;
   letter-spacing: 0.03em;
   line-height: 1;
   text-transform: uppercase;

@@ -1,8 +1,16 @@
 import type { Metadata } from "next";
+import { Permanent_Marker } from "next/font/google";
 import "./globals.css";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ErrorMonitoringProvider } from "./components/ErrorMonitoringProvider";
 import SkipLinks from "./components/SkipLinks";
+
+const permanentMarker = Permanent_Marker({
+  subsets: ["latin"],
+  weight: "400",
+  display: "swap",
+  variable: "--font-permanent-marker",
+});
 
 export const metadata: Metadata = {
   title: "UNITEL - NEMSU University Hotel | Book Your Stay",
@@ -20,7 +28,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="scroll-smooth" suppressHydrationWarning>
+    <html lang="en" className={`${permanentMarker.variable} scroll-smooth`} suppressHydrationWarning>
       <body className="antialiased" suppressHydrationWarning>
         <ErrorMonitoringProvider>
           <SkipLinks />
