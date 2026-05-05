@@ -34,19 +34,19 @@ export default function Navbar({ hotelName = 'UNITEL Hotel' }: NavbarProps = {})
 
   const timeDisplay = currentTime
     ? currentTime.toLocaleTimeString('en-PH', {
-        hour12: true,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      })
+      hour12: true,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
     : '--:--:-- --';
 
   const dateDisplay = currentTime
     ? currentTime.toLocaleDateString('en-PH', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric'
-      })
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric'
+    })
     : '--- --- --';
 
   const navLinks = [
@@ -58,9 +58,8 @@ export default function Navbar({ hotelName = 'UNITEL Hotel' }: NavbarProps = {})
 
   return (
     <nav
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        isScrolled ? "py-2 sm:py-3" : "py-4 sm:py-5"
-      } bg-[#112240] shadow-lg`}
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isScrolled ? "py-2 sm:py-3" : "py-4 sm:py-5"
+        } bg-[#112240] shadow-lg`}
     >
       {/* Consistent gradient background */}
       <div className="absolute inset-0 bg-linear-to-b from-[#0b1433]/50 via-[#112240]/80 to-[#112240] pointer-events-none" />
@@ -91,9 +90,9 @@ export default function Navbar({ hotelName = 'UNITEL Hotel' }: NavbarProps = {})
             {/* Philippine Flag */}
             <div className="flex items-center gap-1">
               <svg width="24" height="18" viewBox="0 0 24 18" className="rounded-sm">
-                <rect width="24" height="9" fill="#0038A8"/>
-                <rect y="9" width="24" height="9" fill="#CE1126"/>
-                <polygon points="0,0 10,9 0,18" fill="#FFFFFF"/>
+                <rect width="24" height="9" fill="#0038A8" />
+                <rect y="9" width="24" height="9" fill="#CE1126" />
+                <polygon points="0,0 10,9 0,18" fill="#FFFFFF" />
               </svg>
               <span className="text-xs font-medium">PH</span>
             </div>
@@ -149,9 +148,9 @@ export default function Navbar({ hotelName = 'UNITEL Hotel' }: NavbarProps = {})
           <div className="flex items-center justify-center gap-3 py-2 border-b border-white/10 mb-3">
             <div className="flex items-center gap-1">
               <svg width="20" height="15" viewBox="0 0 24 18" className="rounded-sm">
-                <rect width="24" height="9" fill="#0038A8"/>
-                <rect y="9" width="24" height="9" fill="#CE1126"/>
-                <polygon points="0,0 10,9 0,18" fill="#FFFFFF"/>
+                <rect width="24" height="9" fill="#0038A8" />
+                <rect y="9" width="24" height="9" fill="#CE1126" />
+                <polygon points="0,0 10,9 0,18" fill="#FFFFFF" />
               </svg>
               <span className="text-xs font-medium">PH</span>
             </div>

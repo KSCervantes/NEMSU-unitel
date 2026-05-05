@@ -32,6 +32,7 @@ body {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -42,6 +43,7 @@ body {
     opacity: 0;
     transform: translateY(-30px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -53,6 +55,7 @@ body {
     opacity: 0;
     transform: translateY(30px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -64,6 +67,7 @@ body {
     opacity: 0;
     transform: translateX(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateX(0);
@@ -75,6 +79,7 @@ body {
     opacity: 0;
     transform: scale(0.9);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
@@ -85,24 +90,31 @@ body {
   0% {
     background-position: -1000px 0;
   }
+
   100% {
     background-position: 1000px 0;
   }
 }
 
 @keyframes float {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateY(0px);
   }
+
   50% {
     transform: translateY(-10px);
   }
 }
 
 @keyframes glow {
-  0%, 100% {
+
+  0%,
+  100% {
     box-shadow: 0 0 5px rgba(59, 130, 246, 0.5);
   }
+
   50% {
     box-shadow: 0 0 20px rgba(59, 130, 246, 0.8), 0 0 30px rgba(59, 130, 246, 0.6);
   }
@@ -129,12 +141,10 @@ body {
 }
 
 .animate-shimmer {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.2),
-    transparent
-  );
+  background: linear-gradient(90deg,
+      transparent,
+      rgba(255, 255, 255, 0.2),
+      transparent);
   background-size: 1000px 100%;
   animation: shimmer 2s infinite;
 }
@@ -173,7 +183,11 @@ html {
 }
 
 /* Smooth transitions for all interactive elements */
-button, a, input, select, textarea {
+button,
+a,
+input,
+select,
+textarea {
   transition: all 0.3s ease;
 }
 
@@ -194,29 +208,29 @@ button, a, input, select, textarea {
 
 /* Hero wordmark styling for the hotel title */
 .hero-hotel-wordmark {
-  font-family: var(--font-permanent-marker), "Permanent Marker", cursive;
-  font-weight: 400;
-  letter-spacing: 0.03em;
-  line-height: 1;
+  font-family: var(--font-playfair), "Playfair Display", "Georgia", serif;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.05;
   text-transform: uppercase;
   color: #f8fafc;
   text-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.18),
-    0 10px 26px rgba(0, 0, 0, 0.42);
-  -webkit-text-stroke: 0.7px rgba(8, 23, 49, 0.35);
+    0 2px 4px rgba(0, 0, 0, 0.18),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+  -webkit-text-stroke: 0.5px rgba(8, 23, 49, 0.2);
 }
 
 .hero-hotel-wordmark .hero-hotel-wordmark-accent {
   color: #fde68a;
   text-shadow:
-    0 0 22px rgba(253, 230, 138, 0.45),
-    0 10px 24px rgba(0, 0, 0, 0.4);
-  -webkit-text-stroke: 0.7px rgba(92, 57, 8, 0.26);
+    0 0 18px rgba(253, 230, 138, 0.4),
+    0 8px 20px rgba(0, 0, 0, 0.3);
+  -webkit-text-stroke: 0.5px rgba(92, 57, 8, 0.18);
 }
 
 @media (max-width: 640px) {
   .hero-hotel-wordmark {
-    letter-spacing: 0.018em;
+    letter-spacing: 0.02em;
   }
 }
 
@@ -387,23 +401,19 @@ button[class*="btn-book-now"]:disabled,
 
 /* Make disabled dates more visible */
 .rdp-day_disabled {
-  background-color: repeating-linear-gradient(
-    45deg,
-    transparent,
-    transparent 5px,
-    rgba(239, 68, 68, 0.1) 5px,
-    rgba(239, 68, 68, 0.1) 10px
-  );
+  background-color: repeating-linear-gradient(45deg,
+      transparent,
+      transparent 5px,
+      rgba(239, 68, 68, 0.1) 5px,
+      rgba(239, 68, 68, 0.1) 10px);
 }
 
 .dark .rdp-day_disabled {
-  background-color: repeating-linear-gradient(
-    45deg,
-    transparent,
-    transparent 5px,
-    rgba(239, 68, 68, 0.2) 5px,
-    rgba(239, 68, 68, 0.2) 10px
-  );
+  background-color: repeating-linear-gradient(45deg,
+      transparent,
+      transparent 5px,
+      rgba(239, 68, 68, 0.2) 5px,
+      rgba(239, 68, 68, 0.2) 10px);
 }
 
 /* Admin table/readability system */
@@ -474,11 +484,11 @@ button[class*="btn-book-now"]:disabled,
   border-right: 0;
 }
 
-.admin-ui .admin-data-table tbody tr + tr td {
+.admin-ui .admin-data-table tbody tr+tr td {
   border-top: 1px solid #eef2f7;
 }
 
-.dark .admin-ui .admin-data-table tbody tr + tr td {
+.dark .admin-ui .admin-data-table tbody tr+tr td {
   border-top-color: #374151;
 }
 
