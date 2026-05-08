@@ -96,7 +96,7 @@ export default function RoomBookingsPage() {
       return <span className="px-2.5 py-1 rounded text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">Confirmed</span>;
     }
     if (status === 'in-progress') {
-      return <span className="px-2.5 py-1 rounded text-xs font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">In Progress</span>;
+      return <span className="px-2.5 py-1 rounded text-xs font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">In-House</span>;
     }
     if (status === 'pending') {
       return <span className="px-2.5 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">Pending</span>;

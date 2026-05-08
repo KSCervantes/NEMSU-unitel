@@ -70,12 +70,15 @@ const months = [
 
 const monthShortNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-const formatStatusLabel = (status?: string) =>
-  (status || 'unknown')
+const formatStatusLabel = (status?: string) => {
+  if (status === 'in-progress') return 'In-House';
+
+  return (status || 'unknown')
     .split(/[-_\s]+/)
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
+};
 
 function parseNumber(value: number | string | undefined): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -586,7 +589,7 @@ export default function Revenue() {
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
             <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Revenue Bookings</p>
             <p className="text-3xl font-bold text-gray-900 dark:text-white mt-3">{revenueBookingCount}</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Confirmed, in-house, and completed records</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Confirmed, In-House, and completed records</p>
           </div>
 
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">

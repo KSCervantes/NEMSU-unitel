@@ -45,12 +45,15 @@ interface MaintenanceTask {
   createdAt: { seconds: number; nanoseconds: number } | Date;
 }
 
-const formatStatusLabel = (status: string) =>
-  status
+const formatStatusLabel = (status: string) => {
+  if (status === 'in-progress') return 'In-House';
+
+  return status
     .split(/[-_\s]+/)
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
+};
 
 const isActiveStayStatus = (status: string) => status === 'confirmed' || status === 'in-progress';
 
@@ -369,9 +372,9 @@ export default function AdminDashboard() {
                 type="button"
                 onClick={() => router.push('/admin/completed?tab=checkins')}
                 className="text-center rounded-md px-2 py-1 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                aria-label="Open in-house guests"
+                aria-label="Open In-House guests"
               >
-                <p className="text-xs text-gray-500 dark:text-gray-400">In-house</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">In-House</p>
                 <p className="text-2xl font-semibold text-gray-900 dark:text-white">{todayCheckIns}</p>
               </button>
               <div className="w-px h-8 bg-gray-200 dark:bg-gray-700"></div>
@@ -490,7 +493,7 @@ export default function AdminDashboard() {
                 type="button"
                 onClick={() => router.push('/admin/reservations?status=in-progress')}
                 className={cardClassName}
-                aria-label="Open in-house reservations"
+                aria-label="Open In-House reservations"
               >
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-base font-semibold text-gray-900 dark:text-white">In-House</h3>
@@ -498,7 +501,7 @@ export default function AdminDashboard() {
                 </div>
                 <p className="text-2xl font-semibold text-gray-900 dark:text-white">{inProgressCount}</p>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Checked-in guests</p>
-                <span className={cardFooterClassName}>View in-house</span>
+                <span className={cardFooterClassName}>View In-House</span>
               </button>
 
               <button

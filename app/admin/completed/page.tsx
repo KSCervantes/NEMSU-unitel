@@ -32,12 +32,15 @@ const completedTabs: CompletedTab[] = ['checkins', 'pending', 'checkouts', 'canc
 
 const isActiveStayStatus = (status: string) => status === 'confirmed' || status === 'in-progress';
 
-const formatStatusLabel = (status: string) =>
-  status
+const formatStatusLabel = (status: string) => {
+  if (status === 'in-progress') return 'In-House';
+
+  return status
     .split(/[-_\s]+/)
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
+};
 
 function CompletedContent() {
   const router = useRouter();
@@ -98,7 +101,7 @@ function CompletedContent() {
     }
   };
 
-  // In-house: active guests currently occupying a room (checkIn <= today < checkOut)
+  // In-House: active guests currently occupying a room (checkIn <= today < checkOut)
   const checkIns = bookings.filter(b => {
     const checkInDate = parseBookingDate(b.checkIn);
     const checkOutDate = parseBookingDate(b.checkOut);
@@ -183,7 +186,7 @@ function CompletedContent() {
         {/* Stats Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">In-house</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">In-House</p>
             <p className="text-3xl font-semibold text-gray-900 dark:text-white">{checkIns.length}</p>
             <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Confirmed or checked in</p>
           </div>
@@ -223,7 +226,7 @@ function CompletedContent() {
                 : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
             }`}
           >
-            In-house ({checkIns.length})
+            In-House ({checkIns.length})
           </button>
           <button
             onClick={() => handleTabChange('pending')}
@@ -279,7 +282,7 @@ function CompletedContent() {
                 title="No records found"
                 description={
                   activeTab === 'checkins'
-                    ? "No active guests are currently in-house."
+                    ? "No active In-House guests found."
                     : activeTab === 'pending'
                     ? "No pending bookings found. Reservations awaiting approval will appear here."
                     : activeTab === 'checkouts'

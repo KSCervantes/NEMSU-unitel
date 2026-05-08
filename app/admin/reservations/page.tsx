@@ -108,12 +108,15 @@ type ReservationFilter = 'all' | 'pending' | 'confirmed' | 'in-progress' | 'canc
 
 const reservationFilters: ReservationFilter[] = ['all', 'pending', 'confirmed', 'in-progress', 'cancelled', 'completed'];
 
-const formatStatusLabel = (status: string) =>
-  status
+const formatStatusLabel = (status: string) => {
+  if (status === 'in-progress') return 'In-House';
+
+  return status
     .split(/[-_\s]+/)
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
+};
 
 function ReservationsContent() {
   const router = useRouter();
@@ -2144,7 +2147,7 @@ function ReservationsContent() {
                       >
                         <option value="pending">Pending</option>
                         <option value="confirmed">Confirmed</option>
-                        <option value="in-progress">In Progress</option>
+                        <option value="in-progress">In-House</option>
                         <option value="cancelled">Cancelled</option>
                       </select>
                     </div>

@@ -23,12 +23,15 @@ interface StatusStats {
   completed: number;
 }
 
-const formatStatusLabel = (status: string) =>
-  status
+const formatStatusLabel = (status: string) => {
+  if (status === 'in-progress') return 'In-House';
+
+  return status
     .split(/[-_\s]+/)
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
+};
 
 export default function Analytics() {
   const { isAuthenticated } = useProtectedAdminPage();
@@ -331,7 +334,7 @@ export default function Analytics() {
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
             <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Active Reservations</div>
             <div className="text-3xl font-semibold text-gray-900 dark:text-white">{statusStats.confirmed + statusStats['in-progress']}</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Confirmed + in-house</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Confirmed + In-House</div>
           </div>
         </div>
       </AdminMainContent>
