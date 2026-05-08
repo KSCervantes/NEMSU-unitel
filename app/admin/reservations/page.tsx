@@ -2,7 +2,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState, useCallback } from 'react';
+import { Suspense, useEffect, useState, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Swal from 'sweetalert2';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -69,7 +70,7 @@ interface Booking {
   checkIn: string;
   checkOut: string;
   guests: string;
-  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
+  status: 'pending' | 'confirmed' | 'in-progress' | 'cancelled' | 'completed';
   createdAt: any;
   street?: string;
   street1?: string;
@@ -103,7 +104,20 @@ interface Booking {
   };
 }
 
-export default function Reservations() {
+type ReservationFilter = 'all' | 'pending' | 'confirmed' | 'in-progress' | 'cancelled' | 'completed';
+
+const reservationFilters: ReservationFilter[] = ['all', 'pending', 'confirmed', 'in-progress', 'cancelled', 'completed'];
+
+const formatStatusLabel = (status: string) =>
+  status
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+
+function ReservationsContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { isAuthenticated } = useProtectedAdminPage();
   const { formatCurrency } = useAdminCurrency(isAuthenticated);
   const { settings: hotelSettings } = useHotelSettings(isAuthenticated);
@@ -117,17 +131,19 @@ export default function Reservations() {
       initCSRF();
     }
   }, []);
+
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [bookedByRoom, setBookedByRoom] = useState<Record<string, { start: number; end: number; id: string }[]>>({});
   const [maintenanceByRoom, setMaintenanceByRoom] = useState<Record<string, { start: number; end: number; id: string }[]>>({});
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedBooking, setExpandedBooking] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isViewDetailsOpen, setIsViewDetailsOpen] = useState(false);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
+  const [viewDetailsBooking, setViewDetailsBooking] = useState<Booking | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [selectedCouponId, setSelectedCouponId] = useState<CouponId | "">("");
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
@@ -139,6 +155,8 @@ export default function Reservations() {
   const [barangays, setBarangays] = useState<Barangay[]>([]);
   const [addressLoading, setAddressLoading] = useState(false);
   const { coupons, couponMap, availabilityMap } = useCoupons(isAuthenticated);
+  const statusParam = searchParams.get('status') as ReservationFilter | null;
+  const filter: ReservationFilter = statusParam && reservationFilters.includes(statusParam) ? statusParam : 'all';
   const [formData, setFormData] = useState<Partial<Booking>>({
     name: '',
     surname: '',
@@ -279,8 +297,8 @@ export default function Reservations() {
         } as Booking;
         bookingsData.push(booking);
 
-        // Build booked ranges for conflict detection (skip cancelled)
-        if (booking.status !== 'cancelled' && booking.room && booking.checkIn && booking.checkOut) {
+        // Only confirmed and in-progress bookings block room availability.
+        if ((booking.status === 'confirmed' || booking.status === 'in-progress') && booking.room && booking.checkIn && booking.checkOut) {
           const start = new Date(booking.checkIn).setHours(0, 0, 0, 0);
           const end = new Date(booking.checkOut).setHours(0, 0, 0, 0); // checkout is exclusive
           if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
@@ -346,7 +364,7 @@ export default function Reservations() {
 
         // Find confirmed bookings where checkout date has passed
         const expiredBookings = bookings.filter(booking => {
-          if (booking.status !== 'confirmed' || !booking.checkOut) return false;
+          if ((booking.status !== 'confirmed' && booking.status !== 'in-progress') || !booking.checkOut) return false;
           const checkoutDate = new Date(booking.checkOut);
           checkoutDate.setHours(0, 0, 0, 0);
           const checkoutTime = checkoutDate.getTime();
@@ -548,10 +566,52 @@ export default function Reservations() {
   const isIdentityFieldsLocked = Boolean(editingBooking?.coupon?.applied);
   const isBookingCoreFieldsLocked = Boolean(editingBooking?.coupon?.applied);
 
-  const updateBookingStatus = async (bookingId: string, newStatus: 'pending' | 'confirmed' | 'cancelled' | 'completed') => {
+  const getPaymentWithoutCoupon = (booking: Booking) => {
+    if (!booking.payment) return undefined;
+    const subtotal = Number(booking.payment.subtotal ?? ((booking.payment.basePrice || 0) + (booking.payment.extraFee || 0))) || 0;
+    const previousDiscount = Number(booking.payment.couponDiscount ?? booking.coupon?.discountAmount ?? 0) || 0;
+    const fallbackTotal = (Number(booking.payment.total) || 0) + previousDiscount;
+
+    return {
+      ...booking.payment,
+      couponDiscount: 0,
+      total: subtotal > 0 ? subtotal : fallbackTotal,
+    };
+  };
+
+  const askToConfirmWithoutCoupon = async (booking: Booking, conflictSource: string) => {
+    const paymentWithoutCoupon = getPaymentWithoutCoupon(booking);
+    const originalTotal = Number(booking.payment?.total ?? 0) || 0;
+    const updatedTotal = Number(paymentWithoutCoupon?.total ?? originalTotal) || 0;
+    const result = await Swal.fire({
+      icon: 'warning',
+      title: 'Coupon Already Used',
+      html: `
+        <div class="text-left">
+          <p>This guest already redeemed a coupon through the same ${conflictSource}.</p>
+          <p class="mt-2">You can still confirm the reservation, but the coupon discount will be removed and the booking total will be recalculated.</p>
+          <p class="mt-3 text-sm"><strong>Current total:</strong> ${formatCurrency(originalTotal, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          <p class="text-sm"><strong>Total without coupon:</strong> ${formatCurrency(updatedTotal, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'Confirm without coupon',
+      cancelButtonText: 'Keep pending',
+      confirmButtonColor: '#2563eb',
+      cancelButtonColor: '#6b7280',
+    });
+
+    return {
+      confirmed: result.isConfirmed,
+      paymentWithoutCoupon,
+    };
+  };
+
+  const updateBookingStatus = async (bookingId: string, newStatus: 'pending' | 'confirmed' | 'in-progress' | 'cancelled' | 'completed') => {
     try {
       const booking = bookings.find(b => b.id === bookingId);
       const bookingRef = doc(db, 'bookings', bookingId);
+      let notificationBooking = booking;
       const statusPayload = {
         status: newStatus,
         updatedAt: serverTimestamp(),
@@ -579,6 +639,7 @@ export default function Reservations() {
           country: String(booking.country || ''),
         });
 
+        let couponConflictSource: string | null = null;
         let shouldCreateUsageLock = false;
         if (couponUsageRef) {
           const usageSnapshot = await getDoc(couponUsageRef);
@@ -590,75 +651,89 @@ export default function Reservations() {
               usageData.bookingId === bookingId &&
               usageData.couponId === couponId;
             if (!usageMatchesCurrentBooking) {
-              Swal.fire({
-                icon: 'warning',
-                title: 'Coupon Already Used',
-                text: 'This guest identity has already used a coupon.',
-                confirmButtonColor: '#f59e0b'
-              });
-              return;
+              couponConflictSource = 'email';
             }
           }
         }
 
         const identityLocksToCreate: CouponIdentityLock[] = [];
-        for (const identityLock of couponIdentityLocks) {
-          const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
-          const identitySnapshot = await getDoc(identityRef);
-          if (!identitySnapshot.exists()) {
-            identityLocksToCreate.push(identityLock);
-            continue;
-          }
+        if (!couponConflictSource) {
+          for (const identityLock of couponIdentityLocks) {
+            const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
+            const identitySnapshot = await getDoc(identityRef);
+            if (!identitySnapshot.exists()) {
+              identityLocksToCreate.push(identityLock);
+              continue;
+            }
 
-          const identityData = identitySnapshot.data() as { bookingId?: string; couponId?: string };
-          const identityMatchesCurrentBooking =
-            identityData.bookingId === bookingId &&
-            identityData.couponId === couponId;
-          if (!identityMatchesCurrentBooking) {
-            Swal.fire({
-              icon: 'warning',
-              title: 'Coupon Already Used',
-              text: 'This guest identity has already used a coupon.',
-              confirmButtonColor: '#f59e0b'
-            });
+            const identityData = identitySnapshot.data() as { bookingId?: string; couponId?: string };
+            const identityMatchesCurrentBooking =
+              identityData.bookingId === bookingId &&
+              identityData.couponId === couponId;
+            if (!identityMatchesCurrentBooking) {
+              couponConflictSource = identityLock.identityType;
+              break;
+            }
+          }
+        }
+
+        if (couponConflictSource) {
+          const confirmWithoutCoupon = await askToConfirmWithoutCoupon(booking, couponConflictSource);
+          if (!confirmWithoutCoupon.confirmed) {
             return;
           }
-        }
 
-        const batch = writeBatch(db);
-        batch.update(bookingRef, statusPayload);
-
-        if (couponUsageRef && couponUsageDocId && shouldCreateUsageLock) {
-          batch.set(couponUsageRef, {
-            emailKey: couponUsageDocId,
-            emailLower: normalizedEmail,
-            couponId,
-            bookingId,
-            source: 'admin',
-            createdAt: serverTimestamp(),
+          await updateDoc(bookingRef, {
+            ...statusPayload,
+            couponId: '',
+            coupon: {
+              applied: false,
+              removedReason: 'Coupon already used by this guest identity',
+            },
+            ...(confirmWithoutCoupon.paymentWithoutCoupon && { payment: confirmWithoutCoupon.paymentWithoutCoupon }),
           });
-        }
+          notificationBooking = {
+            ...booking,
+            status: newStatus,
+            coupon: { applied: false },
+            ...(confirmWithoutCoupon.paymentWithoutCoupon && { payment: confirmWithoutCoupon.paymentWithoutCoupon }),
+          };
+        } else {
+          const batch = writeBatch(db);
+          batch.update(bookingRef, statusPayload);
 
-        identityLocksToCreate.forEach((identityLock) => {
-          const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
-          batch.set(identityRef, {
-            identityKey: identityLock.identityKey,
-            identityType: identityLock.identityType,
-            couponId,
-            bookingId,
-            source: 'admin',
-            createdAt: serverTimestamp(),
+          if (couponUsageRef && couponUsageDocId && shouldCreateUsageLock) {
+            batch.set(couponUsageRef, {
+              emailKey: couponUsageDocId,
+              emailLower: normalizedEmail,
+              couponId,
+              bookingId,
+              source: 'admin',
+              createdAt: serverTimestamp(),
+            });
+          }
+
+          identityLocksToCreate.forEach((identityLock) => {
+            const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
+            batch.set(identityRef, {
+              identityKey: identityLock.identityKey,
+              identityType: identityLock.identityType,
+              couponId,
+              bookingId,
+              source: 'admin',
+              createdAt: serverTimestamp(),
+            });
           });
-        });
 
-        await batch.commit();
+          await batch.commit();
+        }
       } else {
         await updateDoc(bookingRef, statusPayload);
       }
 
       // Send email notification if booking found and status is confirmed or cancelled
       let emailSent = false;
-      if (booking && (newStatus === 'confirmed' || newStatus === 'cancelled')) {
+      if (notificationBooking && (newStatus === 'confirmed' || newStatus === 'cancelled')) {
         try {
           const currentUser = auth.currentUser;
           const idToken = currentUser ? await currentUser.getIdToken() : null;
@@ -671,21 +746,21 @@ export default function Reservations() {
 
           const response = await fetch('/api/send-email', {
             method: 'POST',
-            headers,
-            body: JSON.stringify({
-              to: booking.email,
+              headers,
+              body: JSON.stringify({
+              to: notificationBooking.email,
               type: newStatus === 'confirmed' ? 'approved' : 'rejected',
               bookingId,
-              guestName: `${booking.name} ${booking.surname}`,
-              roomType: booking.room,
-              checkIn: new Date(booking.checkIn).toLocaleDateString('en-US', {
+              guestName: `${notificationBooking.name} ${notificationBooking.surname}`,
+              roomType: notificationBooking.room,
+              checkIn: new Date(notificationBooking.checkIn).toLocaleDateString('en-US', {
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
               }),
-              checkOut: new Date(booking.checkOut).toLocaleDateString('en-US', {
+              checkOut: new Date(notificationBooking.checkOut).toLocaleDateString('en-US', {
                 weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
               }),
-              guests: Number.parseInt(String(booking.guests || '1'), 10) || 1,
-              totalAmount: Number(booking.payment?.total ?? 0) || undefined,
+              guests: Number.parseInt(String(notificationBooking.guests || '1'), 10) || 1,
+              totalAmount: Number(notificationBooking.payment?.total ?? 0) || undefined,
               reason: newStatus === 'cancelled' ? 'Room not available for selected dates' : undefined,
               hotelName: hotelSettings.hotelName,
               contactEmail: hotelSettings.contactEmail,
@@ -707,7 +782,7 @@ export default function Reservations() {
         }
       }
 
-      const statusText = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
+      const statusText = formatStatusLabel(newStatus);
       Swal.fire({
         icon: 'success',
         title: 'Status Updated!',
@@ -735,6 +810,8 @@ export default function Reservations() {
     switch (status) {
       case 'confirmed':
         return 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400';
+      case 'in-progress':
+        return 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400';
       case 'pending':
         return 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400';
       case 'cancelled':
@@ -1211,6 +1288,21 @@ export default function Reservations() {
         zip: String(formData.zip || ''),
         country: String(formData.country || ''),
       }) : [];
+      if (!lockedCouponId && couponIdentityLocks.length > 0) {
+        for (const identityLock of couponIdentityLocks) {
+          const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
+          const identitySnapshot = await getDoc(identityRef);
+          if (identitySnapshot.exists()) {
+            Swal.fire({
+              icon: 'warning',
+              title: 'Coupon Already Used',
+              text: `This guest already redeemed a coupon through the same ${identityLock.identityType}. Remove the coupon to continue without a discount.`,
+              confirmButtonColor: '#f59e0b'
+            });
+            return;
+          }
+        }
+      }
       const formValues = { ...formData } as Partial<Booking> & {
         id?: string;
         createdAt?: unknown;
@@ -1352,8 +1444,17 @@ export default function Reservations() {
     }
   };
 
-  // Exclude completed bookings from the main reservations view
-  const filteredBookings = (filter === 'all' ? bookings.filter(b => b.status !== 'completed') : bookings.filter(b => b.status === filter && b.status !== 'completed'))
+  const handleFilterChange = (nextFilter: ReservationFilter) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('status', nextFilter);
+    params.delete('bookingId');
+    router.push(`/admin/reservations?${params.toString()}`);
+  };
+
+  const highlightedBookingId = searchParams.get('bookingId');
+
+  // Keep completed bookings out of the default queue, but show them when the Completed filter is selected.
+  const filteredBookings = (filter === 'all' ? bookings.filter(b => b.status !== 'completed') : bookings.filter(b => b.status === filter))
     .filter((b) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.trim().toLowerCase();
@@ -1433,17 +1534,17 @@ export default function Reservations() {
             </div>
             <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => setFilter('all')}
+              onClick={() => handleFilterChange('all')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 filter === 'all'
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
-              All ({bookings.length})
+              All ({bookings.filter(b => b.status !== 'completed').length})
             </button>
             <button
-              onClick={() => setFilter('pending')}
+              onClick={() => handleFilterChange('pending')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 filter === 'pending'
                   ? 'bg-amber-500 text-white'
@@ -1453,7 +1554,7 @@ export default function Reservations() {
               Pending ({bookings.filter(b => b.status === 'pending').length})
             </button>
             <button
-              onClick={() => setFilter('confirmed')}
+              onClick={() => handleFilterChange('confirmed')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 filter === 'confirmed'
                   ? 'bg-green-500 text-white'
@@ -1463,7 +1564,17 @@ export default function Reservations() {
               Confirmed ({bookings.filter(b => b.status === 'confirmed').length})
             </button>
             <button
-              onClick={() => setFilter('cancelled')}
+              onClick={() => handleFilterChange('in-progress')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                filter === 'in-progress'
+                  ? 'bg-indigo-500 text-white'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
+            >
+              In-House ({bookings.filter(b => b.status === 'in-progress').length})
+            </button>
+            <button
+              onClick={() => handleFilterChange('cancelled')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 filter === 'cancelled'
                   ? 'bg-red-500 text-white'
@@ -1473,7 +1584,7 @@ export default function Reservations() {
               Cancelled ({bookings.filter(b => b.status === 'cancelled').length})
             </button>
             <button
-              onClick={() => setFilter('completed')}
+              onClick={() => handleFilterChange('completed')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 filter === 'completed'
                   ? 'bg-blue-500 text-white'
@@ -1493,21 +1604,11 @@ export default function Reservations() {
               <thead>
                 <tr className="bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white">
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider border-r border-gray-200 dark:border-gray-600">ID</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider border-r border-gray-200 dark:border-gray-600">Guest Name</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Email</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Mobile</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Phone</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Room</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Check-in</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Check-out</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Guests</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Address</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">City/Province</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Company</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Job Title</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Special Requests</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Coupon</th>
-                  <th className="relative z-10 px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-blue-500/30">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider border-r border-gray-200 dark:border-gray-600">Guest Info</th>
+                  <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-gray-200 dark:border-gray-600">Room</th>
+                  <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-gray-200 dark:border-gray-600">Dates</th>
+                  <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-gray-200 dark:border-gray-600 text-center">Guests</th>
+                  <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider border-r border-gray-200 dark:border-gray-600">Status</th>
                   <th className="px-4 py-4 text-left text-xs font-bold uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
@@ -1532,59 +1633,35 @@ export default function Reservations() {
                   </tr>
                 ) : (
                   paginatedBookings.map((booking, index) => (
-                    <tr key={booking.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                    <tr
+                      key={booking.id}
+                      className={`transition-colors ${
+                        highlightedBookingId === booking.id
+                          ? 'bg-blue-50 dark:bg-blue-900/20 ring-2 ring-inset ring-blue-400'
+                          : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                      }`}
+                    >
                       <td className="px-4 py-3 text-sm text-gray-900 dark:text-white font-medium border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
                         #{(currentPage - 1) * itemsPerPage + index + 1}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
-                        {booking.name} {booking.surname}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700">
-                        {booking.email}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
-                        {booking.mobile}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
-                        {booking.phone || '-'}
+                      <td className="px-4 py-3 border-r border-gray-200 dark:border-gray-700">
+                        <div className="font-semibold text-gray-900 dark:text-white">{booking.name} {booking.surname}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{booking.email}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{booking.mobile}</div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
                         {booking.room}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
-                        {new Date(booking.checkIn).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
-                        {new Date(booking.checkOut).toLocaleDateString()}
+                        <div className="font-medium">{new Date(booking.checkIn).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">to {new Date(booking.checkOut).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap text-center">
                         {booking.guests}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700">
-                        {[booking.street, booking.street1, booking.barangay].filter(Boolean).join(', ') || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
-                        {[booking.city, booking.province].filter(Boolean).join(', ') || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700">
-                        {booking.company || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700">
-                        {booking.jobTitle || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 max-w-xs">
-                        <div className="truncate" title={booking.message}>
-                          {booking.message || '-'}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
-                        {booking.coupon?.applied
-                          ? `${booking.coupon.title || booking.coupon.id} (${booking.coupon.discountPercent || 0}% OFF)`
-                          : '-'}
-                      </td>
                       <td className="px-4 py-3 text-sm border-r border-gray-200 dark:border-gray-700 whitespace-nowrap">
                         <span className={`px-3 py-1.5 text-xs font-bold rounded-lg ${getStatusColor(booking.status)} capitalize inline-block`}>
-                          {booking.status}
+                          {formatStatusLabel(booking.status)}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-sm whitespace-nowrap">
@@ -1618,6 +1695,20 @@ export default function Reservations() {
                                   </svg>
                                   Accept
                                 </button>
+                                {booking.status === 'confirmed' && (
+                                  <button
+                                    onClick={() => {
+                                      updateBookingStatus(booking.id, 'in-progress');
+                                      setOpenDropdown(null);
+                                    }}
+                                    className="w-full px-4 py-2 text-left text-sm text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 flex items-center gap-2 transition-colors font-medium"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                    Check In
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => {
                                     updateBookingStatus(booking.id, 'pending');
@@ -1642,7 +1733,7 @@ export default function Reservations() {
                                   </svg>
                                   Reject
                                 </button>
-                                {booking.status === 'confirmed' && (
+                                {(booking.status === 'confirmed' || booking.status === 'in-progress') && (
                                   <button
                                     onClick={() => {
                                       updateBookingStatus(booking.id, 'completed');
@@ -1659,6 +1750,22 @@ export default function Reservations() {
                               </div>
                             )}
                           </div>
+
+                          <button
+                            onClick={() => {
+                              setViewDetailsBooking(booking);
+                              setIsViewDetailsOpen(true);
+                            }}
+                            className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 flex items-center gap-1.5"
+                            title="View Details"
+                            aria-label={`View details for ${booking.name} ${booking.surname}`}
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                            <span>Details</span>
+                          </button>
 
                           <button
                             onClick={() => printBooking(booking)}
@@ -2035,9 +2142,10 @@ export default function Reservations() {
                         onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
                         className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                       >
-                        <option value="pending">⏳ Pending</option>
-                        <option value="confirmed">✅ Confirmed</option>
-                        <option value="cancelled">❌ Cancelled</option>
+                        <option value="pending">Pending</option>
+                        <option value="confirmed">Confirmed</option>
+                        <option value="in-progress">In Progress</option>
+                        <option value="cancelled">Cancelled</option>
                       </select>
                     </div>
                   </div>
@@ -2255,7 +2363,180 @@ export default function Reservations() {
               </form>
           </ModalWithFocusTrap>
         )}
+
+        {/* View Details Modal */}
+        {isViewDetailsOpen && viewDetailsBooking && (
+          <ModalWithFocusTrap
+            isOpen={isViewDetailsOpen}
+            onClose={() => {
+              setIsViewDetailsOpen(false);
+              setViewDetailsBooking(null);
+            }}
+            title="Reservation Details"
+          >
+            <div className="p-6 space-y-6">
+              {/* Guest Details */}
+              <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg border border-gray-200 dark:border-gray-600">
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Guest Information</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6">
+                  <div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Name</span>
+                    <span className="text-sm font-semibold text-gray-900 dark:text-white">{viewDetailsBooking.name} {viewDetailsBooking.surname}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Email</span>
+                    <span className="text-sm text-gray-900 dark:text-white">{viewDetailsBooking.email}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Mobile</span>
+                    <span className="text-sm text-gray-900 dark:text-white">{viewDetailsBooking.mobile}</span>
+                  </div>
+                  {viewDetailsBooking.phone && (
+                    <div>
+                      <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Phone</span>
+                      <span className="text-sm text-gray-900 dark:text-white">{viewDetailsBooking.phone}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Address Details */}
+              {(viewDetailsBooking.street || viewDetailsBooking.city || viewDetailsBooking.province) && (
+                <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg border border-gray-200 dark:border-gray-600">
+                  <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Address & Company</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6">
+                    <div className="sm:col-span-2">
+                      <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Full Address</span>
+                      <span className="text-sm text-gray-900 dark:text-white">
+                        {[
+                          viewDetailsBooking.street,
+                          viewDetailsBooking.street1,
+                          viewDetailsBooking.barangay,
+                          viewDetailsBooking.city,
+                          viewDetailsBooking.province,
+                          viewDetailsBooking.zip,
+                          viewDetailsBooking.country
+                        ].filter(Boolean).join(', ')}
+                      </span>
+                    </div>
+                    {viewDetailsBooking.company && (
+                      <div>
+                        <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Company</span>
+                        <span className="text-sm text-gray-900 dark:text-white">{viewDetailsBooking.company}</span>
+                      </div>
+                    )}
+                    {viewDetailsBooking.jobTitle && (
+                      <div>
+                        <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Job Title</span>
+                        <span className="text-sm text-gray-900 dark:text-white">{viewDetailsBooking.jobTitle}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Booking Configuration */}
+              <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg border border-gray-200 dark:border-gray-600">
+                <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Booking Details</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6">
+                  <div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Room</span>
+                    <span className="text-sm font-semibold text-gray-900 dark:text-white">{viewDetailsBooking.room}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Guests</span>
+                    <span className="text-sm font-semibold text-gray-900 dark:text-white">{viewDetailsBooking.guests}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Check-in</span>
+                    <span className="text-sm text-gray-900 dark:text-white">{new Date(viewDetailsBooking.checkIn).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 block mb-0.5">Check-out</span>
+                    <span className="text-sm text-gray-900 dark:text-white">{new Date(viewDetailsBooking.checkOut).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment Details */}
+              {viewDetailsBooking.payment && (
+                <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg border border-gray-200 dark:border-gray-600">
+                  <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Payment Information</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between text-gray-600 dark:text-gray-300">
+                      <span>Base Price ({viewDetailsBooking.payment.nights} nights)</span>
+                      <span>{formatCurrency(viewDetailsBooking.payment.basePrice, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                    {viewDetailsBooking.payment.extraFee > 0 && (
+                      <div className="flex justify-between text-gray-600 dark:text-gray-300">
+                        <span>Extra Guest Fee</span>
+                        <span>{formatCurrency(viewDetailsBooking.payment.extraFee, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                    {viewDetailsBooking.coupon?.applied && (
+                      <div className="flex justify-between text-green-600 dark:text-green-400 font-medium pt-1">
+                        <span>Coupon: {viewDetailsBooking.coupon.title || viewDetailsBooking.coupon.id}</span>
+                        <span>-{formatCurrency(viewDetailsBooking.payment.couponDiscount || 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-gray-900 dark:text-white font-bold pt-2 border-t border-gray-200 dark:border-gray-600 mt-2">
+                      <span>Total Price</span>
+                      <span className="text-blue-600 dark:text-blue-400">{formatCurrency(viewDetailsBooking.payment.total, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Special Requests */}
+              {viewDetailsBooking.message && (
+                <div className="bg-amber-50 dark:bg-amber-900/10 p-4 rounded-lg border border-amber-200 dark:border-amber-800">
+                  <h3 className="text-sm font-bold text-amber-800 dark:text-amber-500 uppercase tracking-wider mb-2">Special Requests</h3>
+                  <p className="text-sm text-amber-900 dark:text-amber-400 whitespace-pre-wrap">{viewDetailsBooking.message}</p>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <button
+                  type="button"
+                  onClick={() => printBooking(viewDetailsBooking)}
+                  className="px-6 py-2.5 text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 font-medium transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                  </svg>
+                  Print
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsViewDetailsOpen(false);
+                    setViewDetailsBooking(null);
+                  }}
+                  className="px-6 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 font-medium transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </ModalWithFocusTrap>
+        )}
       </AdminMainContent>
     </div>
+  );
+}
+
+function AdminPageFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#1a3a52' }}>
+      <div className="text-white text-xl">Loading...</div>
+    </div>
+  );
+}
+
+export default function Reservations() {
+  return (
+    <Suspense fallback={<AdminPageFallback />}>
+      <ReservationsContent />
+    </Suspense>
   );
 }

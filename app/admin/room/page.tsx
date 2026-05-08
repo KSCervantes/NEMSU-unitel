@@ -1,7 +1,7 @@
 "use client";
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState, useCallback } from 'react';
+import { Suspense, useEffect, useState, useCallback } from 'react';
 import Swal from 'sweetalert2';
 import Image from 'next/image';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
@@ -9,7 +9,7 @@ import { useAdminCurrency } from '../hooks/useAdminCurrency';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
-import { useRouter as useNextRouter } from 'next/navigation';
+import { useRouter as useNextRouter, useSearchParams } from 'next/navigation';
 import { db, storage } from '@/lib/firebase';
 import { collection, query, where, getDocs, doc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
@@ -42,8 +42,13 @@ type RoomPayload = {
   image?: string;
 };
 
-export default function RoomManagement() {
+type RoomFilter = 'all' | 'occupied' | 'available' | 'maintenance';
+
+const roomFilters: RoomFilter[] = ['all', 'occupied', 'available', 'maintenance'];
+
+function RoomManagementContent() {
   const nextRouter = useNextRouter();
+  const searchParams = useSearchParams();
   const { isAuthenticated, isLoading } = useProtectedAdminPage();
   const { formatCurrency } = useAdminCurrency(isAuthenticated);
 
@@ -58,6 +63,8 @@ export default function RoomManagement() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<{ id?: string; name: string; price: string; description: string; perBed?: string; maxGuests?: number; image?: string; imageFile?: File | null } | null>(null);
   const [showDebug, setShowDebug] = useState(false);
+  const statusParam = searchParams.get('status') as RoomFilter | null;
+  const roomFilter: RoomFilter = statusParam && roomFilters.includes(statusParam) ? statusParam : 'all';
 
   const fetchRooms = useCallback(async () => {
     try {
@@ -248,6 +255,37 @@ export default function RoomManagement() {
     );
   };
 
+  const roomMatchesFilter = (roomName: string, filterToMatch: RoomFilter) => {
+    const status = roomStatus[roomName];
+    if (filterToMatch === 'all') return true;
+    if (filterToMatch === 'maintenance') return Boolean(status?.underMaintenance);
+    if (filterToMatch === 'occupied') return (status?.activeBookings || 0) > 0;
+    return !status?.underMaintenance && (status?.activeBookings || 0) === 0;
+  };
+
+  const filteredRoomTypes = roomTypes.filter((room) => roomMatchesFilter(room.name, roomFilter));
+
+  const roomFilterOptions: { value: RoomFilter; label: string; count: number }[] = [
+    { value: 'all', label: 'All', count: roomTypes.length },
+    { value: 'occupied', label: 'Occupied', count: roomTypes.filter((room) => roomMatchesFilter(room.name, 'occupied')).length },
+    { value: 'available', label: 'Available', count: roomTypes.filter((room) => roomMatchesFilter(room.name, 'available')).length },
+    { value: 'maintenance', label: 'Maintenance', count: roomTypes.filter((room) => roomMatchesFilter(room.name, 'maintenance')).length },
+  ];
+
+  const handleRoomFilterChange = (nextFilter: RoomFilter) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('status', nextFilter);
+    nextRouter.push(`/admin/room?${params.toString()}`);
+  };
+
+  const roomFilterEmptyTitle = roomFilter === 'occupied'
+    ? 'No occupied rooms'
+    : roomFilter === 'available'
+    ? 'No available rooms'
+    : roomFilter === 'maintenance'
+    ? 'No rooms under maintenance'
+    : 'No rooms configured';
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#1a3a52' }}>
@@ -323,9 +361,40 @@ export default function RoomManagement() {
                 <pre className="text-xs overflow-auto">{JSON.stringify(roomTypes.map(r => ({ name: r.name, id: r.id })), null, 2)}</pre>
               </div>
             )}
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 mb-4">
+              <div className="flex flex-wrap gap-2">
+                {roomFilterOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => handleRoomFilterChange(option.value)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      roomFilter === option.value
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                    }`}
+                  >
+                    {option.label} ({option.count})
+                  </button>
+                ))}
+              </div>
+            </div>
             {/* Rooms Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {roomTypes.map((room) => {
+            {filteredRoomTypes.length === 0 ? (
+              <div className="py-16">
+                <EmptyState
+                  title={roomFilterEmptyTitle}
+                  description="Rooms matching this status will appear here when availability changes."
+                  icon={
+                    <svg className="w-16 h-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                    </svg>
+                  }
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {filteredRoomTypes.map((room) => {
                 const status = roomStatus[room.name];
                 return (
                   <div key={room.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg hover:border-gray-300 dark:hover:border-gray-600 transition-all">
@@ -409,7 +478,8 @@ export default function RoomManagement() {
                   </div>
                 );
               })}
-            </div>
+              </div>
+            )}
           </>
         )}
 
@@ -756,5 +826,21 @@ export default function RoomManagement() {
         </div>
       )}
     </div>
+  );
+}
+
+function AdminPageFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#1a3a52' }}>
+      <div className="text-white text-xl">Loading...</div>
+    </div>
+  );
+}
+
+export default function RoomManagement() {
+  return (
+    <Suspense fallback={<AdminPageFallback />}>
+      <RoomManagementContent />
+    </Suspense>
   );
 }

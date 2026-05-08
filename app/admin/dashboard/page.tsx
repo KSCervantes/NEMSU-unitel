@@ -23,7 +23,7 @@ interface Booking {
   checkIn: string;
   checkOut: string;
   guests: string;
-  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
+  status: 'pending' | 'confirmed' | 'in-progress' | 'cancelled' | 'completed';
   createdAt: { seconds: number; nanoseconds: number } | Date;
   phone?: string;
   street?: string;
@@ -44,6 +44,23 @@ interface MaintenanceTask {
   status: string;
   createdAt: { seconds: number; nanoseconds: number } | Date;
 }
+
+const formatStatusLabel = (status: string) =>
+  status
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+
+const isActiveStayStatus = (status: string) => status === 'confirmed' || status === 'in-progress';
+
+const getStatusBadgeClassName = (status: string) => {
+  if (status === 'confirmed') return 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400';
+  if (status === 'in-progress') return 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400';
+  if (status === 'pending') return 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400';
+  if (status === 'completed') return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400';
+  return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400';
+};
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -130,12 +147,12 @@ export default function AdminDashboard() {
       })) as Booking[];
       setBookings(bookingData);
 
-      // Calculate in-house confirmed guests and today's check-outs.
+      // Calculate in-house guests and today's check-outs.
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
       const checkInsToday = bookingData.filter((b) => {
-        if (b.status !== 'confirmed') return false;
+        if (!isActiveStayStatus(b.status)) return false;
         const checkInDate = parseBookingDate(b.checkIn);
         const checkOutDate = parseBookingDate(b.checkOut);
         if (!checkInDate || !checkOutDate) return false;
@@ -145,7 +162,7 @@ export default function AdminDashboard() {
       }).length;
 
       const checkOutsToday = bookingData.filter((b) => {
-        if (b.status !== 'confirmed') return false;
+        if (!isActiveStayStatus(b.status)) return false;
         const checkOutDate = parseBookingDate(b.checkOut);
         if (!checkOutDate) return false;
         checkOutDate.setHours(0, 0, 0, 0);
@@ -155,8 +172,8 @@ export default function AdminDashboard() {
       setTodayCheckOuts(checkOutsToday);
 
       logInfo('Today:', today.toISOString().split('T')[0]);
-      logInfo('In-house confirmed guests:', checkInsToday);
-      logInfo('Confirmed check-outs today:', checkOutsToday);
+      logInfo('In-house guests:', checkInsToday);
+      logInfo('Active check-outs today:', checkOutsToday);
 
     });
 
@@ -219,9 +236,10 @@ export default function AdminDashboard() {
     );
   }
 
-  // Calculate metrics - Only confirmed bookings affect availability
+  // Calculate metrics. Confirmed and in-progress bookings both reserve room availability.
   const pendingCount = bookings.filter(b => b.status === 'pending').length;
   const confirmedCount = bookings.filter(b => b.status === 'confirmed').length;
+  const inProgressCount = bookings.filter(b => b.status === 'in-progress').length;
   const cancelledCount = bookings.filter(b => b.status === 'cancelled').length;
   const completedCount = bookings.filter(b => b.status === 'completed').length;
 
@@ -234,7 +252,7 @@ export default function AdminDashboard() {
   // A room is occupied only if someone is currently checked in (not pending future bookings)
   const occupiedRooms = new Set<string>();
   bookings.forEach(b => {
-    if (b.status === 'confirmed' && b.room && b.checkIn && b.checkOut) {
+    if (isActiveStayStatus(b.status) && b.room && b.checkIn && b.checkOut) {
       const checkIn = parseBookingDate(b.checkIn);
       const checkOut = parseBookingDate(b.checkOut);
       if (!checkIn || !checkOut) return;
@@ -253,23 +271,29 @@ export default function AdminDashboard() {
 
   // Available rooms = total room types - occupied - under maintenance
   const occupiedCount = occupiedRooms.size;
-  const availableRooms = totalRooms - occupiedCount - underMaintenance;
+  const availableRooms = Math.max(totalRooms - occupiedCount - underMaintenance, 0);
   // Occupancy rate = (occupied rooms / total rooms) * 100
   const occupancyRate = totalRooms > 0 ? Math.round((occupiedCount / totalRooms) * 100) : 0;
 
   // Get recent activity (last 10 items from bookings and maintenance)
   const recentActivity = [
     ...bookings.slice(0, 5).map(b => ({
+      id: `booking-${b.id}`,
       type: 'booking',
-      message: `${b.status === 'confirmed' ? '✅' : b.status === 'pending' ? '⏳' : b.status === 'completed' ? '✔️' : '❌'} Booking for ${b.name} ${b.surname} - ${b.room}`,
+      message: `Booking ${formatStatusLabel(b.status)} for ${b.name} ${b.surname} - ${b.room}`,
       time: b.createdAt,
-      status: b.status
+      status: b.status,
+      href: b.status === 'completed'
+        ? `/admin/completed?tab=completed&bookingId=${b.id}`
+        : `/admin/reservations?status=${b.status}&bookingId=${b.id}`
     })),
     ...maintenanceTasks.slice(0, 5).map(t => ({
+      id: `maintenance-${t.id}`,
       type: 'maintenance',
-      message: `🔧 Maintenance: ${t.room} - ${t.issue}`,
+      message: `Maintenance: ${t.room} - ${t.issue}`,
       time: t.createdAt,
-      status: t.status
+      status: t.status,
+      href: `/admin/maintenance?status=${t.status === 'completed' ? 'completed' : 'active'}&taskId=${t.id}`
     }))
   ]
   .sort((a, b) => {
@@ -320,6 +344,9 @@ export default function AdminDashboard() {
     return `${days}d ago`;
   };
 
+  const cardClassName = "group w-full text-left bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5 transition-all hover:-translate-y-0.5 hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900";
+  const cardFooterClassName = "mt-3 inline-flex items-center text-xs font-semibold text-blue-600 dark:text-blue-400";
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <Sidebar />
@@ -338,94 +365,173 @@ export default function AdminDashboard() {
               </p>
             </div>
             <div className="hidden md:flex items-center gap-6 px-4 py-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-              <div className="text-center">
-                <p className="text-xs text-gray-500 dark:text-gray-400">Check-ins</p>
+              <button
+                type="button"
+                onClick={() => router.push('/admin/completed?tab=checkins')}
+                className="text-center rounded-md px-2 py-1 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                aria-label="Open in-house guests"
+              >
+                <p className="text-xs text-gray-500 dark:text-gray-400">In-house</p>
                 <p className="text-2xl font-semibold text-gray-900 dark:text-white">{todayCheckIns}</p>
-              </div>
+              </button>
               <div className="w-px h-8 bg-gray-200 dark:bg-gray-700"></div>
-              <div className="text-center">
+              <button
+                type="button"
+                onClick={() => router.push('/admin/completed?tab=checkouts')}
+                className="text-center rounded-md px-2 py-1 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                aria-label="Open today's check-outs"
+              >
                 <p className="text-xs text-gray-500 dark:text-gray-400">Today&apos;s Check-outs</p>
                 <p className="text-2xl font-semibold text-gray-900 dark:text-white">{todayCheckOuts}</p>
-              </div>
+              </button>
             </div>
           </div>
         </div>
 
         <div className="space-y-6">
-          {/* Metrics Cards */}
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
-            {/* Total Rooms */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Rooms</p>
-              <p className="text-3xl font-semibold text-gray-900 dark:text-white">{totalRooms}</p>
-              <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Room Types</p>
+          <section>
+            <div className="mb-3">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Room Inventory</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Rooms, availability, and maintenance capacity</p>
             </div>
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
+              <button
+                type="button"
+                onClick={() => router.push('/admin/room?status=all')}
+                className={cardClassName}
+                aria-label="Open all rooms"
+              >
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total Rooms</p>
+                <p className="text-3xl font-semibold text-gray-900 dark:text-white">{totalRooms}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Room Types</p>
+                <span className={cardFooterClassName}>View rooms</span>
+              </button>
 
-            {/* Occupied Rooms */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Occupied</p>
-              <p className="text-3xl font-semibold text-gray-900 dark:text-white">{occupiedCount}</p>
-              <div className="mt-3 flex items-center gap-2">
-                <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                  <div className="bg-green-500 h-2 rounded-full" style={{ width: `${occupancyRate}%` }}></div>
+              <button
+                type="button"
+                onClick={() => router.push('/admin/room?status=occupied')}
+                className={cardClassName}
+                aria-label="Open occupied rooms"
+              >
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Occupied</p>
+                <p className="text-3xl font-semibold text-gray-900 dark:text-white">{occupiedCount}</p>
+                <div className="mt-3 flex items-center gap-2">
+                  <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                    <div className="bg-green-500 h-2 rounded-full" style={{ width: `${occupancyRate}%` }}></div>
+                  </div>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">{occupancyRate}%</span>
                 </div>
-                <span className="text-sm text-gray-600 dark:text-gray-400">{occupancyRate}%</span>
-              </div>
-            </div>
+                <span className={cardFooterClassName}>View occupied</span>
+              </button>
 
-            {/* Available Rooms */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Available</p>
-              <p className="text-3xl font-semibold text-gray-900 dark:text-white">{availableRooms}</p>
-              <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Ready for booking</p>
-            </div>
+              <button
+                type="button"
+                onClick={() => router.push('/admin/room?status=available')}
+                className={cardClassName}
+                aria-label="Open available rooms"
+              >
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Available</p>
+                <p className="text-3xl font-semibold text-gray-900 dark:text-white">{availableRooms}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Ready for booking</p>
+                <span className={cardFooterClassName}>View available</span>
+              </button>
 
-            {/* Under Maintenance */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Maintenance</p>
-              <p className="text-3xl font-semibold text-gray-900 dark:text-white">{underMaintenance}</p>
-              <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Active tasks</p>
+              <button
+                type="button"
+                onClick={() => router.push('/admin/room?status=maintenance')}
+                className={cardClassName}
+                aria-label="Open rooms under maintenance"
+              >
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Maintenance</p>
+                <p className="text-3xl font-semibold text-gray-900 dark:text-white">{underMaintenance}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Active tasks</p>
+                <span className={cardFooterClassName}>View rooms</span>
+              </button>
             </div>
-          </div>
+          </section>
 
-          {/* Booking Status Overview */}
-          <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-4">
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Pending</h3>
-                <span className="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded text-xs font-medium">{pendingCount}</span>
-              </div>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">{pendingCount}</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Awaiting confirmation</p>
+          <section>
+            <div className="mb-3">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Booking Workflow</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Reservation queues by current status</p>
             </div>
+            <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-5">
+              <button
+                type="button"
+                onClick={() => router.push('/admin/reservations?status=pending')}
+                className={cardClassName}
+                aria-label="Open pending reservations"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Pending</h3>
+                  <span className="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded text-xs font-medium">{pendingCount}</span>
+                </div>
+                <p className="text-2xl font-semibold text-gray-900 dark:text-white">{pendingCount}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Awaiting confirmation</p>
+                <span className={cardFooterClassName}>View pending</span>
+              </button>
 
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Confirmed</h3>
-                <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded text-xs font-medium">{confirmedCount}</span>
-              </div>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">{confirmedCount}</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Active bookings</p>
-            </div>
+              <button
+                type="button"
+                onClick={() => router.push('/admin/reservations?status=confirmed')}
+                className={cardClassName}
+                aria-label="Open confirmed reservations"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Confirmed</h3>
+                  <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded text-xs font-medium">{confirmedCount}</span>
+                </div>
+                <p className="text-2xl font-semibold text-gray-900 dark:text-white">{confirmedCount}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Approved, not checked in</p>
+                <span className={cardFooterClassName}>View confirmed</span>
+              </button>
 
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Cancelled</h3>
-                <span className="px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded text-xs font-medium">{cancelledCount}</span>
-              </div>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">{cancelledCount}</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Total cancellations</p>
-            </div>
+              <button
+                type="button"
+                onClick={() => router.push('/admin/reservations?status=in-progress')}
+                className={cardClassName}
+                aria-label="Open in-house reservations"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">In-House</h3>
+                  <span className="px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 rounded text-xs font-medium">{inProgressCount}</span>
+                </div>
+                <p className="text-2xl font-semibold text-gray-900 dark:text-white">{inProgressCount}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Checked-in guests</p>
+                <span className={cardFooterClassName}>View in-house</span>
+              </button>
 
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Completed</h3>
-                <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-medium">{completedCount}</span>
-              </div>
-              <p className="text-2xl font-semibold text-gray-900 dark:text-white">{completedCount}</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Marked as completed</p>
+              <button
+                type="button"
+                onClick={() => router.push('/admin/reservations?status=cancelled')}
+                className={cardClassName}
+                aria-label="Open cancelled reservations"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Cancelled</h3>
+                  <span className="px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded text-xs font-medium">{cancelledCount}</span>
+                </div>
+                <p className="text-2xl font-semibold text-gray-900 dark:text-white">{cancelledCount}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Total cancellations</p>
+                <span className={cardFooterClassName}>View cancelled</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push('/admin/completed?tab=completed')}
+                className={cardClassName}
+                aria-label="Open completed bookings"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white">Completed</h3>
+                  <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-medium">{completedCount}</span>
+                </div>
+                <p className="text-2xl font-semibold text-gray-900 dark:text-white">{completedCount}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Marked as completed</p>
+                <span className={cardFooterClassName}>View completed</span>
+              </button>
             </div>
-          </div>
+          </section>
 
           {/* Activity & Quick Actions */}
           <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
@@ -437,20 +543,23 @@ export default function AdminDashboard() {
               <div className="p-5">
                 <div className="space-y-2 max-h-96 overflow-y-auto">
                   {recentActivity.length > 0 ? (
-                    recentActivity.map((item, idx) => (
-                      <div key={idx} className="flex items-start justify-between gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded border border-gray-200 dark:border-gray-600">
+                    recentActivity.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => router.push(item.href)}
+                        className="group flex w-full items-start justify-between gap-3 p-3 text-left bg-gray-50 dark:bg-gray-700/50 rounded border border-gray-200 dark:border-gray-600 transition-colors hover:bg-white dark:hover:bg-gray-700 hover:border-blue-300 dark:hover:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
                         <div className="flex-1">
                           <p className="text-sm text-gray-700 dark:text-gray-300">{item.message}</p>
                           <span className="text-xs text-gray-500 dark:text-gray-400">{getTimeAgo(item.time)}</span>
                         </div>
                         <span className={`text-xs px-2 py-1 rounded font-medium ${
-                          item.status === 'confirmed' || item.status === 'completed' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
-                          item.status === 'pending' || item.status === 'in-progress' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' :
-                          'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                          getStatusBadgeClassName(item.status)
                         }`}>
-                          {item.status}
+                          {formatStatusLabel(item.status)}
                         </span>
-                      </div>
+                      </button>
                     ))
                   ) : (
                     <div className="text-center py-8">

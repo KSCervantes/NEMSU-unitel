@@ -1,7 +1,8 @@
 "use client";
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useProtectedAdminPage } from '../hooks/useProtectedAdminPage';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -21,15 +22,31 @@ interface Booking {
   checkIn: string;
   checkOut: string;
   guests: string;
-  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
+  status: 'pending' | 'confirmed' | 'in-progress' | 'cancelled' | 'completed';
   createdAt: { seconds: number; nanoseconds: number } | Date;
 }
 
-export default function Completed() {
+type CompletedTab = 'checkins' | 'pending' | 'checkouts' | 'cancelled' | 'completed';
+
+const completedTabs: CompletedTab[] = ['checkins', 'pending', 'checkouts', 'cancelled', 'completed'];
+
+const isActiveStayStatus = (status: string) => status === 'confirmed' || status === 'in-progress';
+
+const formatStatusLabel = (status: string) =>
+  status
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+
+function CompletedContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { isAuthenticated } = useProtectedAdminPage();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'checkins' | 'pending' | 'checkouts' | 'cancelled' | 'completed'>('checkins');
+  const tabParam = searchParams.get('tab') as CompletedTab | null;
+  const activeTab: CompletedTab = tabParam && completedTabs.includes(tabParam) ? tabParam : 'checkins';
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -70,8 +87,10 @@ export default function Completed() {
   const parseBookingDate = (dateStr: string | undefined): Date | null => {
     if (!dateStr) return null;
     try {
-      // Handle ISO format with T separator
-      const d = new Date(dateStr);
+      const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+      const d = dateOnlyMatch
+        ? new Date(Number(dateOnlyMatch[1]), Number(dateOnlyMatch[2]) - 1, Number(dateOnlyMatch[3]))
+        : new Date(dateStr);
       if (isNaN(d.getTime())) return null;
       return d;
     } catch {
@@ -79,7 +98,7 @@ export default function Completed() {
     }
   };
 
-  // Check-ins: confirmed guests currently checked in (checkIn <= today < checkOut)
+  // In-house: active guests currently occupying a room (checkIn <= today < checkOut)
   const checkIns = bookings.filter(b => {
     const checkInDate = parseBookingDate(b.checkIn);
     const checkOutDate = parseBookingDate(b.checkOut);
@@ -88,7 +107,7 @@ export default function Completed() {
     checkOutDate.setHours(0, 0, 0, 0);
     const checkInTime = checkInDate.getTime();
     const checkOutTime = checkOutDate.getTime();
-    return b.status === 'confirmed' && checkInTime <= today.getTime() && checkOutTime > today.getTime();
+    return isActiveStayStatus(b.status) && checkInTime <= today.getTime() && checkOutTime > today.getTime();
   });
 
   const pending = bookings.filter(b => b.status === 'pending');
@@ -98,7 +117,7 @@ export default function Completed() {
     const checkOutDate = parseBookingDate(b.checkOut);
     if (!checkOutDate) return false;
     checkOutDate.setHours(0, 0, 0, 0);
-    return checkOutDate.getTime() === today.getTime() && b.status === 'confirmed';
+    return checkOutDate.getTime() === today.getTime() && isActiveStayStatus(b.status);
   });
 
   // Past check-outs: Only show recent past check-outs (last 30 days) to avoid loading thousands of records
@@ -110,7 +129,7 @@ export default function Completed() {
     if (!checkOutDate) return false;
     checkOutDate.setHours(0, 0, 0, 0);
     const checkOutTime = checkOutDate.getTime();
-    return checkOutTime < today.getTime() && checkOutTime >= thirtyDaysAgo.getTime() && b.status === 'confirmed';
+    return checkOutTime < today.getTime() && checkOutTime >= thirtyDaysAgo.getTime() && isActiveStayStatus(b.status);
   });
 
   const cancelled = bookings.filter(b => b.status === 'cancelled');
@@ -136,6 +155,14 @@ export default function Completed() {
   };
 
   const displayData = getDisplayData();
+  const highlightedBookingId = searchParams.get('bookingId');
+
+  const handleTabChange = (tab: CompletedTab) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('tab', tab);
+    params.delete('bookingId');
+    router.push(`/admin/completed?${params.toString()}`);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -156,9 +183,9 @@ export default function Completed() {
         {/* Stats Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Today&apos;s Check-ins</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">In-house</p>
             <p className="text-3xl font-semibold text-gray-900 dark:text-white">{checkIns.length}</p>
-            <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Confirmed and currently in-house</p>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">Confirmed or checked in</p>
           </div>
 
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
@@ -189,17 +216,17 @@ export default function Completed() {
         {/* Tabs */}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-1 mb-4 inline-flex gap-1">
           <button
-            onClick={() => setActiveTab('checkins')}
+            onClick={() => handleTabChange('checkins')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'checkins'
                 ? 'bg-green-500 text-white'
                 : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
             }`}
           >
-            Check-ins ({checkIns.length})
+            In-house ({checkIns.length})
           </button>
           <button
-            onClick={() => setActiveTab('pending')}
+            onClick={() => handleTabChange('pending')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'pending'
                 ? 'bg-amber-500 text-white'
@@ -209,7 +236,7 @@ export default function Completed() {
             Pending ({pending.length})
           </button>
           <button
-            onClick={() => setActiveTab('checkouts')}
+            onClick={() => handleTabChange('checkouts')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'checkouts'
                 ? 'bg-blue-500 text-white'
@@ -219,7 +246,7 @@ export default function Completed() {
             Check-outs ({checkOuts.length + pastCheckOuts.length})
           </button>
           <button
-            onClick={() => setActiveTab('cancelled')}
+            onClick={() => handleTabChange('cancelled')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'cancelled'
                 ? 'bg-red-500 text-white'
@@ -229,7 +256,7 @@ export default function Completed() {
             Cancelled ({cancelled.length})
           </button>
           <button
-            onClick={() => setActiveTab('completed')}
+            onClick={() => handleTabChange('completed')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'completed'
                 ? 'bg-blue-500 text-white'
@@ -252,7 +279,7 @@ export default function Completed() {
                 title="No records found"
                 description={
                   activeTab === 'checkins'
-                    ? "No confirmed guests are currently checked in."
+                    ? "No active guests are currently in-house."
                     : activeTab === 'pending'
                     ? "No pending bookings found. Reservations awaiting approval will appear here."
                     : activeTab === 'checkouts'
@@ -285,7 +312,14 @@ export default function Completed() {
                 </thead>
                 <tbody className="divide-y divide-gray-200/50 dark:divide-gray-700/50">
                   {displayData.map((booking, idx) => (
-                    <tr key={booking.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                    <tr
+                      key={booking.id}
+                      className={`transition-colors ${
+                        highlightedBookingId === booking.id
+                          ? 'bg-blue-50 dark:bg-blue-900/20 ring-2 ring-inset ring-blue-400'
+                          : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                      }`}
+                    >
                       <td className="px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">
                         {idx + 1}
                       </td>
@@ -312,19 +346,15 @@ export default function Completed() {
                         <span className={`px-2 py-1 rounded text-xs font-medium ${
                           booking.status === 'confirmed'
                             ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                            : booking.status === 'in-progress'
+                            ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400'
                             : booking.status === 'pending'
                             ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
                             : booking.status === 'completed'
                             ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
                             : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
                         }`}>
-                          {booking.status === 'confirmed'
-                            ? 'Confirmed'
-                            : booking.status === 'pending'
-                            ? 'Pending'
-                            : booking.status === 'completed'
-                            ? 'Completed'
-                            : 'Cancelled'}
+                          {formatStatusLabel(booking.status)}
                         </span>
                       </td>
                     </tr>
@@ -336,5 +366,21 @@ export default function Completed() {
         </div>
       </AdminMainContent>
     </div>
+  );
+}
+
+function AdminPageFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#1a3a52' }}>
+      <div className="text-white text-xl">Loading...</div>
+    </div>
+  );
+}
+
+export default function Completed() {
+  return (
+    <Suspense fallback={<AdminPageFallback />}>
+      <CompletedContent />
+    </Suspense>
   );
 }

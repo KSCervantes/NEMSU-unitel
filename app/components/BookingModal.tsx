@@ -8,7 +8,7 @@ import type { DateRange } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
 import Image from "next/image";
 import { db } from '@/lib/firebase';
-import { collection, doc, getDocs, onSnapshot, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
 import { useFocusTrap } from '@/app/hooks/useFocusTrap';
 import { useKeyboardNavigation } from '@/app/hooks/useKeyboardNavigation';
 import { logError } from '@/lib/logger';
@@ -22,7 +22,10 @@ import { useCoupons } from '@/app/hooks/useCoupons';
 import { DEFAULT_HOTEL_SETTINGS, formatHotelCurrency, type SupportedCurrency } from '@/lib/hotelSettings';
 import {
   CouponId,
+  type CouponIdentityInput,
+  type CouponIdentityLock,
   getCouponAvailability,
+  getCouponIdentityLocks,
   getCouponNowLabel,
   isCouponId,
   normalizeGuestEmail
@@ -75,6 +78,18 @@ function parseSettingTime(time: string | undefined, fallbackHour: number, fallba
     .set('millisecond', 0);
 }
 
+async function findExistingCouponIdentityLock(identity: CouponIdentityInput): Promise<CouponIdentityLock | null> {
+  const identityLocks = getCouponIdentityLocks(identity);
+  for (const identityLock of identityLocks) {
+    const identityRef = doc(db, 'couponIdentityLocks', identityLock.identityKey);
+    const identitySnapshot = await getDoc(identityRef);
+    if (identitySnapshot.exists()) {
+      return identityLock;
+    }
+  }
+  return null;
+}
+
 export default function BookingModal({
   isOpen,
   onClose,
@@ -125,6 +140,8 @@ export default function BookingModal({
   const [barangays, setBarangays] = useState<Barangay[]>([]);
   const [loading, setLoading] = useState(false);
   const [maintenanceConflict, setMaintenanceConflict] = useState<string | null>(null);
+  const [couponIdentityConflict, setCouponIdentityConflict] = useState<string | null>(null);
+  const [checkingCouponIdentity, setCheckingCouponIdentity] = useState(false);
   const [range, setRange] = useState<DateRange | undefined>();
   const [checkInTime, setCheckInTime] = useState<Dayjs | null>(() => parseSettingTime(defaultCheckInTime, 15, 0));
   const [checkOutTime, setCheckOutTime] = useState<Dayjs | null>(() => parseSettingTime(defaultCheckOutTime, 11, 0));
@@ -299,6 +316,82 @@ export default function BookingModal({
   const activeCouponAvailability = activeCouponId
     ? (availabilityMap[activeCouponId] || getCouponAvailability(activeCoupon))
     : null;
+  const canApplyActiveCoupon = Boolean(activeCouponId && activeCouponAvailability?.active && !couponIdentityConflict);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkIdentity = async () => {
+      if (!activeCouponId) {
+        setCouponIdentityConflict(null);
+        setCheckingCouponIdentity(false);
+        return;
+      }
+
+      const identity = {
+        name: formData.name,
+        surname: formData.surname,
+        email: formData.email,
+        mobile: formData.mobile,
+        phone: formData.phone,
+        street: formData.street,
+        street1: formData.street1,
+        region: formData.region,
+        province: formData.province,
+        city: formData.city,
+        barangay: formData.barangay,
+        zip: formData.zip,
+        country: formData.country,
+      };
+
+      if (getCouponIdentityLocks(identity).length === 0) {
+        setCouponIdentityConflict(null);
+        setCheckingCouponIdentity(false);
+        return;
+      }
+
+      setCheckingCouponIdentity(true);
+      try {
+        const existingLock = await findExistingCouponIdentityLock(identity);
+        if (cancelled) return;
+        setCouponIdentityConflict(
+          existingLock
+            ? `This guest already used a coupon before. Coupon discounts are one-time only per ${existingLock.identityType}.`
+            : null
+        );
+      } catch (error) {
+        logError('Error checking coupon identity lock:', error);
+        if (!cancelled) {
+          setCouponIdentityConflict(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingCouponIdentity(false);
+        }
+      }
+    };
+
+    void checkIdentity();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeCouponId,
+    formData.name,
+    formData.surname,
+    formData.email,
+    formData.mobile,
+    formData.phone,
+    formData.street,
+    formData.street1,
+    formData.region,
+    formData.province,
+    formData.city,
+    formData.barangay,
+    formData.zip,
+    formData.country,
+  ]);
 
   // Calculate nights and total price
   const calculateStay = () => {
@@ -321,7 +414,7 @@ export default function BookingModal({
       roomPrice: selectedRoomData.price,
       maxGuests: selectedRoomData.maxGuests,
       perBed: selectedRoomData.perBed,
-      couponId: activeCouponAvailability?.active ? activeCouponId : null,
+      couponId: canApplyActiveCoupon ? activeCouponId : null,
     });
 
     return {
@@ -488,6 +581,34 @@ export default function BookingModal({
       }
 
       const normalizedEmail = normalizeGuestEmail(formData.email);
+      if (couponId) {
+        const existingLock = await findExistingCouponIdentityLock({
+          name: formData.name,
+          surname: formData.surname,
+          email: formData.email,
+          mobile: formData.mobile,
+          phone: formData.phone,
+          street: formData.street,
+          street1: formData.street1,
+          region: formData.region,
+          province: formData.province,
+          city: formData.city,
+          barangay: formData.barangay,
+          zip: formData.zip,
+          country: formData.country,
+        });
+
+        if (existingLock) {
+          Swal.fire({
+            icon: 'warning',
+            title: 'Coupon Already Used',
+            text: `This guest already used a coupon before. Remove the coupon to continue booking without a discount.`,
+            confirmButtonColor: '#f59e0b'
+          });
+          setLoading(false);
+          return;
+        }
+      }
 
       const payment = calculateBookingPayment({
         checkIn: formData.checkIn,
@@ -496,10 +617,10 @@ export default function BookingModal({
         roomPrice: roomInfo.price,
         maxGuests: roomInfo.maxGuests,
         perBed: roomInfo.perBed,
-        couponId: couponAvailability?.active ? couponId : null,
+        couponId: couponAvailability?.active && !couponIdentityConflict ? couponId : null,
       });
 
-      // Save booking to Firestore (coupon validation is finalized during admin confirmation)
+      // Save booking to Firestore. Admin confirmation still finalizes the one-time coupon lock.
       const roomSlug = (formData.room || '').toLowerCase().trim().replace(/\s+/g, '-');
       const bookingRef = doc(collection(db, 'bookings'));
       const batch = writeBatch(db);
@@ -1147,6 +1268,17 @@ export default function BookingModal({
             <p className="mt-1 text-xs text-gray-500">
               One coupon only per guest identity (name/contact/address), one-time use.
             </p>
+            {activeCouponId && checkingCouponIdentity && (
+              <p className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                Checking if this guest can still use a coupon...
+              </p>
+            )}
+            {activeCouponId && couponIdentityConflict && (
+              <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                <p className="font-semibold">Coupon cannot be applied</p>
+                <p>{couponIdentityConflict} Select “No coupon” to continue.</p>
+              </div>
+            )}
             {activeCouponId && !activeCouponAvailability?.active && (
               <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 {activeCouponAvailability?.reason || 'Coupon cannot be used right now.'} Today in Asia/Manila: {getCouponNowLabel()}.
@@ -1267,7 +1399,7 @@ export default function BookingModal({
               loading ||
               !range?.from ||
               !range?.to ||
-              (activeCouponId ? !activeCouponAvailability?.active : false)
+              (activeCouponId ? !activeCouponAvailability?.active || Boolean(couponIdentityConflict) || checkingCouponIdentity : false)
             }
             className={`btn-book-now w-full justify-center text-sm sm:text-base md:text-lg ${maintenanceConflict ? 'opacity-60 cursor-not-allowed' : ''}`}
           >

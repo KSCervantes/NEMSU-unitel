@@ -10,28 +10,35 @@ import { useAdminCurrency } from '../hooks/useAdminCurrency';
 import { db } from '@/lib/firebase';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 
-type FilterPeriod = 'all' | 'week' | 'month' | 'year' | string;
+type DateGranularity = 'all' | 'year' | 'month' | 'week' | 'day';
+type DateBasis = 'checkIn' | 'createdAt';
+
+type DateLike = string | Date | { toDate: () => Date } | { seconds: number; nanoseconds?: number };
+
 type BookingPayment = {
   total?: number | string;
   basePrice?: number | string;
   extraFee?: number | string;
   subtotal?: number | string;
   couponDiscount?: number | string;
-  nights?: number;
+  nights?: number | string;
 };
 
 type RevenueBooking = {
   id: string;
+  name?: string;
+  surname?: string;
+  email?: string;
   status?: string;
   payment?: BookingPayment;
   totalPrice?: number | string;
   totalAmount?: number | string;
   createdAt: Date;
-  checkIn?: string | { toDate: () => Date };
-  checkOut?: string | { toDate: () => Date };
+  checkIn?: DateLike;
+  checkOut?: DateLike;
   room?: string;
   guests?: number | string;
-  nights?: number;
+  nights?: number | string;
   coupon?: {
     applied?: boolean;
     id?: string;
@@ -40,30 +47,168 @@ type RevenueBooking = {
   };
 };
 
+type DateRange = {
+  start: Date;
+  end: Date;
+  label: string;
+};
+
+const months = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+const monthShortNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const formatStatusLabel = (status?: string) =>
+  (status || 'unknown')
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+
+function parseNumber(value: number | string | undefined): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Number(value.replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function parseDateValue(value: DateLike | undefined): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value === 'object' && 'toDate' in value && typeof value.toDate === 'function') {
+    const parsed = value.toDate();
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  if (typeof value === 'object' && 'seconds' in value && typeof value.seconds === 'number') {
+    const parsed = new Date(value.seconds * 1000);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  if (typeof value === 'string') {
+    const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (dateOnlyMatch) {
+      const parsed = new Date(Number(dateOnlyMatch[1]), Number(dateOnlyMatch[2]) - 1, Number(dateOnlyMatch[3]));
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+}
+
+function startOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function endOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
+function formatDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatDisplayDate(date: Date) {
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function formatRangeLabel(start: Date, end: Date) {
+  if (start.toDateString() === end.toDateString()) {
+    return formatDisplayDate(start);
+  }
+  return `${formatDisplayDate(start)} - ${formatDisplayDate(end)}`;
+}
+
+function getMonthWeeks(year: number, monthIndex: number) {
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+  const weeks: DateRange[] = [];
+  for (let startDay = 1; startDay <= lastDay; startDay += 7) {
+    const endDay = Math.min(startDay + 6, lastDay);
+    const start = startOfDay(new Date(year, monthIndex, startDay));
+    const end = endOfDay(new Date(year, monthIndex, endDay));
+    weeks.push({
+      start,
+      end,
+      label: `Week ${weeks.length + 1}: ${formatRangeLabel(start, end)}`,
+    });
+  }
+  return weeks;
+}
+
+function getBookingRevenue(booking: RevenueBooking) {
+  return parseNumber(booking.payment?.total) || parseNumber(booking.totalPrice) || parseNumber(booking.totalAmount);
+}
+
+function getBookingNights(booking: RevenueBooking) {
+  return parseNumber(booking.payment?.nights) || parseNumber(booking.nights);
+}
+
+function getBookingDate(booking: RevenueBooking, basis: DateBasis) {
+  if (basis === 'checkIn') {
+    return parseDateValue(booking.checkIn) || booking.createdAt;
+  }
+  return booking.createdAt;
+}
+
+function isWithinRange(date: Date, range: DateRange) {
+  const time = startOfDay(date).getTime();
+  return time >= startOfDay(range.start).getTime() && time <= startOfDay(range.end).getTime();
+}
+
 export default function Revenue() {
   const { isAuthenticated } = useProtectedAdminPage();
   const { formatCurrency } = useAdminCurrency(isAuthenticated);
-  const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>('all');
+  const today = useMemo(() => new Date(), []);
   const [allBookings, setAllBookings] = useState<RevenueBooking[]>([]);
-  const [availableYears, setAvailableYears] = useState<number[]>([]);
+  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(today.getMonth());
+  const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
+  const [selectedDate, setSelectedDate] = useState(formatDateInput(today));
+  const [granularity, setGranularity] = useState<DateGranularity>('month');
+  const [dateBasis, setDateBasis] = useState<DateBasis>('checkIn');
 
   useEffect(() => {
     if (!isAuthenticated) {
       return;
     }
 
-    // Real-time listener for bookings
     const bookingsQuery = query(collection(db, 'bookings'));
     const unsubscribe = onSnapshot(bookingsQuery, (snapshot) => {
       const bookings: RevenueBooking[] = [];
 
       snapshot.forEach((doc) => {
         const data = doc.data();
-        // Include both confirmed and completed bookings in revenue calculation
-        if (data.status === 'confirmed' || data.status === 'completed') {
-          const createdAtValue = data.createdAt?.toDate?.() || (data.createdAt ? new Date(data.createdAt) : new Date());
+        if (data.status === 'confirmed' || data.status === 'in-progress' || data.status === 'completed') {
+          const createdAtValue = parseDateValue(data.createdAt) || new Date();
           bookings.push({
             id: doc.id,
+            name: data.name,
+            surname: data.surname,
+            email: data.email,
             status: data.status,
             payment: data.payment,
             totalPrice: data.totalPrice,
@@ -73,149 +218,216 @@ export default function Revenue() {
             checkOut: data.checkOut,
             room: data.room,
             guests: data.guests,
+            nights: data.nights,
             coupon: data.coupon,
           });
         }
       });
 
       setAllBookings(bookings);
-
-      // Calculate available years from bookings (include both createdAt and checkIn years)
-      const years = new Set<number>();
-      bookings.forEach(booking => {
-        // Add year from when booking was created
-        years.add(booking.createdAt.getFullYear());
-
-        // Also add year from check-in date if available
-        if (booking.checkIn) {
-          const checkInDate = typeof booking.checkIn === 'string' ? new Date(booking.checkIn) : booking.checkIn.toDate();
-          years.add(checkInDate.getFullYear());
-        }
-      });
-
-      // Always include current year and previous year
-      const currentYear = new Date().getFullYear();
-      years.add(currentYear);
-      years.add(currentYear - 1);
-
-      const sortedYears = Array.from(years).sort((a, b) => b - a);
-      setAvailableYears(sortedYears);
     });
 
     return () => unsubscribe();
   }, [isAuthenticated]);
 
+  const availableYears = useMemo(() => {
+    const years = new Set<number>();
+    allBookings.forEach((booking) => {
+      years.add(booking.createdAt.getFullYear());
+      const checkIn = parseDateValue(booking.checkIn);
+      if (checkIn) years.add(checkIn.getFullYear());
+    });
+    years.add(today.getFullYear());
+    years.add(today.getFullYear() - 1);
+    return Array.from(years).sort((a, b) => b - a);
+  }, [allBookings, today]);
+
+  const weekOptions = useMemo(() => getMonthWeeks(selectedYear, selectedMonth), [selectedMonth, selectedYear]);
+  const activeWeekIndex = weekOptions[selectedWeekIndex] ? selectedWeekIndex : 0;
+
+  const activeRange = useMemo<DateRange | null>(() => {
+    if (granularity === 'all') return null;
+    if (granularity === 'year') {
+      const start = startOfDay(new Date(selectedYear, 0, 1));
+      const end = endOfDay(new Date(selectedYear, 11, 31));
+      return { start, end, label: `${selectedYear}` };
+    }
+    if (granularity === 'month') {
+      const start = startOfDay(new Date(selectedYear, selectedMonth, 1));
+      const end = endOfDay(new Date(selectedYear, selectedMonth + 1, 0));
+      return { start, end, label: `${months[selectedMonth]} ${selectedYear}` };
+    }
+    if (granularity === 'week') {
+      return weekOptions[activeWeekIndex] || null;
+    }
+    const parsedDate = parseDateValue(selectedDate);
+    const safeDate = parsedDate || today;
+    return {
+      start: startOfDay(safeDate),
+      end: endOfDay(safeDate),
+      label: formatDisplayDate(safeDate),
+    };
+  }, [activeWeekIndex, granularity, selectedDate, selectedMonth, selectedYear, today, weekOptions]);
+
   const filteredBookings = useMemo(() => {
-    const now = new Date();
-    if (filterPeriod === 'week') {
-      const oneWeekAgo = new Date();
-      oneWeekAgo.setDate(now.getDate() - 7);
-      return allBookings.filter(booking => booking.createdAt >= oneWeekAgo);
-    }
-    if (filterPeriod === 'month') {
-      const oneMonthAgo = new Date();
-      oneMonthAgo.setMonth(now.getMonth() - 1);
-      return allBookings.filter(booking => booking.createdAt >= oneMonthAgo);
-    }
-    if (filterPeriod.toString().includes('year-')) {
-      const yearStr = filterPeriod.toString().replace('year-', '');
-      const selectedYear = parseInt(yearStr, 10);
-      return allBookings.filter(booking => booking.createdAt.getFullYear() === selectedYear);
-    }
-    return allBookings;
-  }, [allBookings, filterPeriod]);
+    const sorted = [...allBookings].sort(
+      (a, b) => getBookingDate(b, dateBasis).getTime() - getBookingDate(a, dateBasis).getTime()
+    );
+    if (!activeRange) return sorted;
+    return sorted.filter((booking) => isWithinRange(getBookingDate(booking, dateBasis), activeRange));
+  }, [activeRange, allBookings, dateBasis]);
 
   const totalRevenue = useMemo(() => {
-    return filteredBookings.reduce((sum, booking) => {
-      let bookingRevenue = 0;
-
-      if (booking.payment && typeof booking.payment === 'object' && 'total' in booking.payment) {
-        bookingRevenue = parseFloat(booking.payment.total?.toString() ?? '0') || 0;
-      } else if (booking.totalPrice) {
-        bookingRevenue = parseFloat(booking.totalPrice.toString()) || 0;
-      } else if (booking.totalAmount) {
-        bookingRevenue = parseFloat(booking.totalAmount.toString()) || 0;
-      }
-
-      if (!Number.isNaN(bookingRevenue) && bookingRevenue > 0) {
-        return sum + bookingRevenue;
-      }
-      return sum;
-    }, 0);
+    return filteredBookings.reduce((sum, booking) => sum + getBookingRevenue(booking), 0);
   }, [filteredBookings]);
 
-  const confirmedBookings = filteredBookings.length;
+  const totalNights = useMemo(() => {
+    return filteredBookings.reduce((sum, booking) => sum + getBookingNights(booking), 0);
+  }, [filteredBookings]);
 
-  // Export CSV function
-  const handleExportCSV = () => {
-    const now = new Date();
-    let filteredBookings = allBookings;
+  const totalDiscount = useMemo(() => {
+    return filteredBookings.reduce((sum, booking) => sum + parseNumber(booking.payment?.couponDiscount), 0);
+  }, [filteredBookings]);
 
-    if (filterPeriod === 'week') {
-      const oneWeekAgo = new Date();
-      oneWeekAgo.setDate(now.getDate() - 7);
-      filteredBookings = allBookings.filter(booking =>
-        booking.createdAt >= oneWeekAgo
-      );
-    } else if (filterPeriod === 'month') {
-      const oneMonthAgo = new Date();
-      oneMonthAgo.setMonth(now.getMonth() - 1);
-      filteredBookings = allBookings.filter(booking =>
-        booking.createdAt >= oneMonthAgo
+  const breakdown = useMemo(() => {
+    const makeBucket = (label: string, start: Date, end: Date) => {
+      const bookings = filteredBookings.filter((booking) => isWithinRange(getBookingDate(booking, dateBasis), { start, end, label }));
+      const total = bookings.reduce((sum, booking) => sum + getBookingRevenue(booking), 0);
+      return { label, start, end, bookings, total };
+    };
+
+    if (granularity === 'all') {
+      return availableYears
+        .slice()
+        .sort((a, b) => b - a)
+        .map((year) => makeBucket(String(year), startOfDay(new Date(year, 0, 1)), endOfDay(new Date(year, 11, 31))));
+    }
+
+    if (granularity === 'year') {
+      return months.map((month, index) =>
+        makeBucket(month, startOfDay(new Date(selectedYear, index, 1)), endOfDay(new Date(selectedYear, index + 1, 0)))
       );
     }
 
-    // Prepare CSV headers
-    const headers = ['Booking ID', 'Room', 'Guests', 'Check-in Date', 'Check-out Date', 'Nights', 'Base Price', 'Extra Fee', 'Coupon', 'Coupon Discount', 'Total Revenue', 'Date Confirmed'];
+    if (granularity === 'month') {
+      const days = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+      return Array.from({ length: days }, (_, index) => {
+        const day = index + 1;
+        const date = new Date(selectedYear, selectedMonth, day);
+        return makeBucket(`${monthShortNames[selectedMonth]} ${day}`, startOfDay(date), endOfDay(date));
+      });
+    }
 
-    // Prepare CSV rows
-    const rows = filteredBookings.map(booking => {
-      const ciStr = booking.checkIn
-        ? (typeof booking.checkIn === 'string' ? new Date(booking.checkIn).toLocaleDateString() : booking.checkIn.toDate().toLocaleDateString())
-        : '';
-      const coStr = booking.checkOut
-        ? (typeof booking.checkOut === 'string' ? new Date(booking.checkOut).toLocaleDateString() : booking.checkOut.toDate().toLocaleDateString())
-        : '';
+    if (granularity === 'week' && activeRange) {
+      const days: Date[] = [];
+      const cursor = startOfDay(activeRange.start);
+      while (cursor.getTime() <= startOfDay(activeRange.end).getTime()) {
+        days.push(new Date(cursor));
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      return days.map((date) => makeBucket(formatDisplayDate(date), startOfDay(date), endOfDay(date)));
+    }
+
+    return filteredBookings.map((booking) => {
+      const date = getBookingDate(booking, dateBasis);
+      return {
+        label: `${booking.room || 'Room'} - ${booking.name || 'Guest'} ${booking.surname || ''}`.trim(),
+        start: startOfDay(date),
+        end: endOfDay(date),
+        bookings: [booking],
+        total: getBookingRevenue(booking),
+      };
+    });
+  }, [activeRange, availableYears, dateBasis, filteredBookings, granularity, selectedMonth, selectedYear]);
+
+  const maxBreakdownTotal = Math.max(...breakdown.map((item) => item.total), 1);
+  const revenueBookingCount = filteredBookings.length;
+  const averageRevenue = revenueBookingCount > 0 ? totalRevenue / revenueBookingCount : 0;
+  const rangeLabel = activeRange?.label || 'All time';
+
+  const handleMonthChange = (monthIndex: number) => {
+    setSelectedMonth(monthIndex);
+    setSelectedWeekIndex(0);
+  };
+
+  const handleWeekChange = (weekIndex: number) => {
+    setSelectedWeekIndex(weekIndex);
+    setGranularity('week');
+  };
+
+  const handleDateChange = (value: string) => {
+    setSelectedDate(value);
+    const parsedDate = parseDateValue(value);
+    if (parsedDate) {
+      setSelectedYear(parsedDate.getFullYear());
+      setSelectedMonth(parsedDate.getMonth());
+    }
+    setGranularity('day');
+  };
+
+  const handleExportCSV = () => {
+    const headers = [
+      'Booking ID',
+      'Guest',
+      'Room',
+      'Status',
+      'Revenue Date',
+      'Check-in Date',
+      'Check-out Date',
+      'Guests',
+      'Nights',
+      'Base Price',
+      'Extra Fee',
+      'Coupon',
+      'Coupon Discount',
+      'Total Revenue',
+      'Record Created',
+    ];
+
+    const rows = filteredBookings.map((booking) => {
+      const revenueDate = getBookingDate(booking, dateBasis);
+      const checkIn = parseDateValue(booking.checkIn);
+      const checkOut = parseDateValue(booking.checkOut);
       return [
-        booking.id || '',
+        booking.id,
+        `${booking.name || ''} ${booking.surname || ''}`.trim(),
         booking.room || '',
+        booking.status || '',
+        formatDisplayDate(revenueDate),
+        checkIn ? formatDisplayDate(checkIn) : '',
+        checkOut ? formatDisplayDate(checkOut) : '',
         booking.guests || '',
-        ciStr,
-        coStr,
-        booking.payment?.nights || booking.nights || '',
+        getBookingNights(booking) || '',
         booking.payment?.basePrice || '',
         booking.payment?.extraFee || '0',
         booking.coupon?.applied ? `${booking.coupon.title || booking.coupon.id || ''} (${booking.coupon.discountPercent || 0}% OFF)` : '',
         booking.payment?.couponDiscount || '0',
-        booking.payment?.total || booking.totalPrice || booking.totalAmount || '0',
-        booking.createdAt.toLocaleDateString() + ' ' + booking.createdAt.toLocaleTimeString()
+        getBookingRevenue(booking),
+        `${booking.createdAt.toLocaleDateString()} ${booking.createdAt.toLocaleTimeString()}`,
       ];
     });
 
-    // Create CSV content
     const csvContent = [
       headers.join(','),
-      ...rows.map(row => row.map(cell => {
-        // Escape quotes and wrap in quotes if contains comma
+      ...rows.map((row) => row.map((cell) => {
         const cellStr = String(cell);
-        return cellStr.includes(',') ? `"${cellStr.replace(/"/g, '""')}"` : cellStr;
-      }).join(','))
+        return /[",\n]/.test(cellStr) ? `"${cellStr.replace(/"/g, '""')}"` : cellStr;
+      }).join(',')),
     ].join('\n');
 
-    // Create blob and download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
-
-    const periodLabel = filterPeriod === 'all' ? 'all-time' : filterPeriod === 'week' ? 'weekly' : 'monthly';
     const timestamp = new Date().toISOString().split('T')[0];
+    const reportName = rangeLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'all-time';
 
     link.setAttribute('href', url);
-    link.setAttribute('download', `revenue-report-${periodLabel}-${timestamp}.csv`);
+    link.setAttribute('download', `revenue-report-${reportName}-${timestamp}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   if (!isAuthenticated) {
@@ -232,167 +444,278 @@ export default function Revenue() {
       <Header />
 
       <AdminMainContent>
-        {/* Header */}
         <div className="admin-page-header mb-6">
           <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
             Revenue
           </h1>
           <p className="text-gray-600 dark:text-gray-400 mt-1 text-sm">
-            Total revenue from confirmed bookings
+            Filter and audit revenue-generating booking records
           </p>
         </div>
 
-        {/* Filter Buttons */}
-        <div className="mb-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center gap-2">
-              <svg className="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-              </svg>
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Filter by Period:</span>
-            </div>
-            <div className="flex gap-2 flex-wrap items-center">
-              <button
-                onClick={() => setFilterPeriod('all')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  filterPeriod === 'all'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              >
-                All Time
-              </button>
-              <button
-                onClick={() => setFilterPeriod('week')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  filterPeriod === 'week'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              >
-                This Week
-              </button>
-              <button
-                onClick={() => setFilterPeriod('month')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  filterPeriod === 'month'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              >
-                This Month
-              </button>
+        <div className="mb-6 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm">
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+                  <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider">Revenue Filter</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Currently viewing: <span className="font-semibold text-blue-600 dark:text-blue-400">{rangeLabel}</span></p>
+                </div>
+              </div>
 
-              {/* Year Filter Dropdown */}
-              {availableYears.length > 0 && (
-                <>
-                  <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1"></div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportCSV}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Export CSV Report
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 dark:bg-gray-700/30 p-4 rounded-lg border border-gray-200 dark:border-gray-600">
+              <div className="flex flex-wrap items-end gap-4">
+                <label className="block w-40">
+                  <span className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">View By</span>
                   <select
-                    value={filterPeriod.toString().includes('year-') ? filterPeriod : ''}
-                    onChange={(e) => e.target.value && setFilterPeriod(e.target.value)}
-                    className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 cursor-pointer focus:ring-2 focus:ring-green-500"
+                    value={granularity}
+                    onChange={(e) => setGranularity(e.target.value as DateGranularity)}
+                    className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-shadow"
                   >
-                    <option value="">📅 Select Year</option>
-                    {availableYears.map((year) => (
-                      <option key={year} value={`year-${year}`}>
-                        {year}
-                      </option>
-                    ))}
+                    <option value="all">All Time</option>
+                    <option value="year">Yearly</option>
+                    <option value="month">Monthly</option>
+                    <option value="week">Weekly</option>
+                    <option value="day">Specific Day</option>
                   </select>
-                </>
-              )}
+                </label>
 
-              {/* Export CSV Button */}
-              <button
-                onClick={handleExportCSV}
-                className="ml-2 px-4 py-2 rounded-lg text-sm font-medium bg-green-600 hover:bg-green-700 text-white shadow-sm transition-colors flex items-center gap-2"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 16v-4m0 0V8m0 4h4m-4 0h-4" />
-                </svg>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Export CSV
-              </button>
+                {granularity !== 'all' && granularity !== 'day' && (
+                  <label className="block w-32">
+                    <span className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Year</span>
+                    <select
+                      value={selectedYear}
+                      onChange={(e) => setSelectedYear(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-shadow"
+                    >
+                      {availableYears.map((year) => (
+                        <option key={year} value={year}>{year}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {(granularity === 'month' || granularity === 'week') && (
+                  <label className="block w-40">
+                    <span className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Month</span>
+                    <select
+                      value={selectedMonth}
+                      onChange={(e) => handleMonthChange(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-shadow"
+                    >
+                      {months.map((month, index) => (
+                        <option key={month} value={index}>{month}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {granularity === 'week' && (
+                  <label className="block w-64">
+                    <span className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Week</span>
+                    <select
+                      value={activeWeekIndex}
+                      onChange={(e) => handleWeekChange(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-shadow"
+                    >
+                      {weekOptions.map((week, index) => (
+                        <option key={week.label} value={index}>{week.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {granularity === 'day' && (
+                  <label className="block w-48">
+                    <span className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Exact Date</span>
+                    <input
+                      type="date"
+                      value={selectedDate}
+                      onChange={(e) => handleDateChange(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-shadow"
+                    />
+                  </label>
+                )}
+
+                <div className="flex-1"></div>
+
+                <label className="block w-48">
+                  <span className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Tracking Basis</span>
+                  <select
+                    value={dateBasis}
+                    onChange={(event) => setDateBasis(event.target.value as DateBasis)}
+                    className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-indigo-50 dark:bg-indigo-900/20 text-indigo-800 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm transition-shadow"
+                  >
+                    <option value="checkIn">Check-in Date</option>
+                    <option value="createdAt">Record Creation Date</option>
+                  </select>
+                </label>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Revenue Display */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Total Revenue Card */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-sm font-medium text-gray-600 dark:text-gray-400">Total Revenue</div>
-              <div className="p-3 bg-green-100 dark:bg-green-900/30 rounded-full">
-                <svg className="w-6 h-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
-            <div className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+            <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Total Revenue</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white mt-3">
               {formatCurrency(totalRevenue, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              {filterPeriod === 'all' && 'From all confirmed bookings'}
-              {filterPeriod === 'week' && 'Last 7 days'}
-              {filterPeriod === 'month' && 'Last 30 days'}
-            </div>
+            </p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">{rangeLabel}</p>
           </div>
 
-          {/* Confirmed Bookings Card */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <div className="text-sm font-medium text-gray-600 dark:text-gray-400">Confirmed Bookings</div>
-              <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-full">
-                <svg className="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
-            <div className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-              {confirmedBookings}
-            </div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              Revenue-generating bookings
-            </div>
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+            <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Revenue Bookings</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white mt-3">{revenueBookingCount}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Confirmed, in-house, and completed records</p>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+            <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Average per Booking</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white mt-3">
+              {formatCurrency(averageRevenue, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Filtered period average</p>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+            <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Nights / Discounts</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white mt-3">{totalNights}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+              {formatCurrency(totalDiscount, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} discount tracked
+            </p>
           </div>
         </div>
 
-        {/* Revenue Insights */}
-        <div className="mt-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Revenue Insights</h3>
-          <div className="space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded">
-                <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                </svg>
-              </div>
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="xl:col-span-1 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+            <div className="flex items-center justify-between mb-4">
               <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">Revenue Calculation</p>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                  Revenue is calculated from confirmed bookings only, ensuring accurate financial tracking.
-                </p>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Period Breakdown</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Revenue grouped by the active view</p>
               </div>
             </div>
 
-            <div className="flex items-start gap-3">
-              <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded">
-                <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-              </div>
+            <div className="space-y-3 max-h-[34rem] overflow-y-auto pr-1">
+              {breakdown.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">No breakdown available.</p>
+              ) : (
+                breakdown.map((item) => (
+                  <div key={`${item.label}-${item.start.toISOString()}`} className="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900 dark:text-white">{item.label}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {item.bookings.length} booking{item.bookings.length === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                      <p className="text-sm font-bold text-gray-900 dark:text-white">
+                        {formatCurrency(item.total, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                    <div className="h-2 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-green-500"
+                        style={{ width: `${Math.max(3, Math.round((item.total / maxBreakdownTotal) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="xl:col-span-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-white">Average Revenue per Booking</p>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                  {confirmedBookings > 0
-                    ? formatCurrency(totalRevenue / confirmedBookings, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                    : formatCurrency(0, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                  }
-                </p>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Revenue Records</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Detailed bookings for {rangeLabel}</p>
               </div>
+              <span className="px-3 py-1 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-sm font-semibold">
+                {filteredBookings.length} records
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Guest</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Room</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Stay</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Status</th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider">Revenue</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                  {filteredBookings.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                        No revenue records found for this filter.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredBookings.map((booking) => {
+                      const checkIn = parseDateValue(booking.checkIn);
+                      const checkOut = parseDateValue(booking.checkOut);
+                      return (
+                        <tr key={booking.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                          <td className="px-4 py-3 text-sm text-gray-900 dark:text-white whitespace-nowrap">
+                            {formatDisplayDate(getBookingDate(booking, dateBasis))}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
+                            <div className="font-medium">{`${booking.name || ''} ${booking.surname || ''}`.trim() || 'Guest'}</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">{booking.email || booking.id}</div>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                            {booking.room || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                            {checkIn && checkOut ? `${formatDisplayDate(checkIn)} - ${formatDisplayDate(checkOut)}` : '-'}
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              {getBookingNights(booking)} night{getBookingNights(booking) === 1 ? '' : 's'}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm whitespace-nowrap">
+                            <span className={`px-2 py-1 rounded text-xs font-semibold capitalize ${
+                              booking.status === 'completed'
+                                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                                : booking.status === 'in-progress'
+                                ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
+                                : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+                            }`}>
+                              {formatStatusLabel(booking.status)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-right font-bold text-gray-900 dark:text-white whitespace-nowrap">
+                            {formatCurrency(getBookingRevenue(booking), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

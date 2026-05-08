@@ -2,7 +2,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AdminMainContent from '../components/AdminMainContent';
@@ -37,7 +38,13 @@ interface RoomData {
   rate?: number;
 }
 
-export default function Maintenance() {
+type MaintenanceFilter = 'all' | 'active' | 'pending' | 'in-progress' | 'completed';
+
+const maintenanceFilters: MaintenanceFilter[] = ['all', 'active', 'pending', 'in-progress', 'completed'];
+
+function MaintenanceContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { isAuthenticated } = useProtectedAdminPage();
 
   // Enable keyboard navigation
@@ -46,6 +53,8 @@ export default function Maintenance() {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<MaintenanceTask | null>(null);
+  const statusParam = searchParams.get('status') as MaintenanceFilter | null;
+  const maintenanceFilter: MaintenanceFilter = statusParam && maintenanceFilters.includes(statusParam) ? statusParam : 'all';
 
   // Fetch rooms from Firestore
   const [availableRooms, setAvailableRooms] = useState<RoomData[]>([]);
@@ -221,6 +230,29 @@ export default function Maintenance() {
     }
   };
 
+  const filteredTasks = tasks.filter((task) => {
+    if (maintenanceFilter === 'all') return true;
+    if (maintenanceFilter === 'active') return task.status === 'pending' || task.status === 'in-progress';
+    return task.status === maintenanceFilter;
+  });
+
+  const highlightedTaskId = searchParams.get('taskId');
+
+  const maintenanceFilterOptions: { value: MaintenanceFilter; label: string; count: number }[] = [
+    { value: 'all', label: 'All', count: tasks.length },
+    { value: 'active', label: 'Active', count: tasks.filter((task) => task.status === 'pending' || task.status === 'in-progress').length },
+    { value: 'pending', label: 'Pending', count: tasks.filter((task) => task.status === 'pending').length },
+    { value: 'in-progress', label: 'In Progress', count: tasks.filter((task) => task.status === 'in-progress').length },
+    { value: 'completed', label: 'Completed', count: tasks.filter((task) => task.status === 'completed').length },
+  ];
+
+  const handleMaintenanceFilterChange = (nextFilter: MaintenanceFilter) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('status', nextFilter);
+    params.delete('taskId');
+    router.push(`/admin/maintenance?${params.toString()}`);
+  };
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#1a3a52' }}>
@@ -282,6 +314,25 @@ export default function Maintenance() {
           </div>
         </div>
 
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3 mb-4">
+          <div className="flex flex-wrap gap-2">
+            {maintenanceFilterOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => handleMaintenanceFilterChange(option.value)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  maintenanceFilter === option.value
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}
+              >
+                {option.label} ({option.count})
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Tasks List */}
         <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-2xl shadow-xl overflow-hidden border border-gray-200/50 dark:border-gray-700/50 hover:shadow-2xl transition-all duration-300">
         <div className="px-6 py-5 border-b border-gray-200/50 dark:border-gray-700/50 bg-linear-to-r from-blue-50/50 via-indigo-50/50 to-transparent dark:from-gray-800/50 relative overflow-hidden">
@@ -294,7 +345,7 @@ export default function Maintenance() {
               </div>
               <h2 className="text-xl font-bold bg-linear-to-r from-gray-800 to-gray-600 dark:from-white dark:to-gray-300 bg-clip-text text-transparent">All Maintenance Tasks</h2>
               <span className="ml-auto px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-sm font-medium">
-                {tasks.length} Total
+                {filteredTasks.length} Shown
               </span>
             </div>
           </div>
@@ -323,9 +374,28 @@ export default function Maintenance() {
                   }
                 />
               </div>
+            ) : filteredTasks.length === 0 ? (
+              <div className="p-12">
+                <EmptyState
+                  title="No maintenance tasks match this filter"
+                  description="Tasks with this status will appear here when maintenance work changes."
+                  icon={
+                    <svg className="w-16 h-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                  }
+                />
+              </div>
             ) : (
-              tasks.map((task) => (
-                <div key={task.id} className="p-5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors border-l-4 border-transparent hover:border-blue-500">
+              filteredTasks.map((task) => (
+                <div
+                  key={task.id}
+                  className={`p-5 transition-colors border-l-4 ${
+                    highlightedTaskId === task.id
+                      ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-500'
+                      : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-700/50 hover:border-blue-500'
+                  }`}
+                >
                   <div className="flex items-start justify-between gap-4 mb-3">
                     <div className="grow">
                       <div className="flex items-center gap-3 mb-2 flex-wrap">
@@ -602,5 +672,21 @@ export default function Maintenance() {
         )}
       </AdminMainContent>
     </div>
+  );
+}
+
+function AdminPageFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#1a3a52' }}>
+      <div className="text-white text-xl">Loading...</div>
+    </div>
+  );
+}
+
+export default function Maintenance() {
+  return (
+    <Suspense fallback={<AdminPageFallback />}>
+      <MaintenanceContent />
+    </Suspense>
   );
 }

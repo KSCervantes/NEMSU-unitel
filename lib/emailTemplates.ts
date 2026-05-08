@@ -104,6 +104,7 @@ export const generateBookingConfirmationEmail = (
       <ul>
         <li>Our team will review your booking request within 24 hours.</li>
         <li>You will receive an email once your booking is confirmed.</li>
+        <li>Pending bookings that are not confirmed within 3 days may be automatically cancelled after a reminder notice.</li>
         <li>If you have any questions, contact us anytime.</li>
       </ul>
 
@@ -303,6 +304,167 @@ export const generateBookingRejectedEmail = (
 
       <p style="margin-top: 30px;">Thank you for your understanding.<br>
       The ${settings.hotelName} Team</p>
+    </div>
+    ${footerHtml(settings)}
+  </div>
+</body>
+</html>
+  `;
+};
+
+export const generatePendingCancellationWarningEmail = (
+  guestName: string,
+  bookingId: string,
+  roomType: string,
+  checkIn: string,
+  checkOut: string,
+  expiresAt: string,
+  options?: EmailTemplateOptions
+) => {
+  const settings = resolveTemplateSettings(options);
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .logo { margin-bottom: 20px; }
+    .logo img { max-width: 50px; height: 50px; width: 50px; border-radius: 50%; object-fit: cover; }
+    .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+    .booking-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
+    .detail-label { font-weight: bold; color: #374151; }
+    .detail-value { color: #6b7280; }
+    .status-badge { background: #fef3c7; color: #92400e; padding: 10px 20px; border-radius: 20px; display: inline-block; font-weight: bold; margin: 20px 0; border: 2px solid #f59e0b; }
+    .warning-box { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px; }
+    .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">
+        <img src="${NEMSU_LOGO}" alt="${settings.hotelName} Logo" width="50" height="50" />
+      </div>
+      <h1 style="margin: 0;">${settings.hotelName}</h1>
+      <h2 style="margin: 10px 0 0 0; font-weight: normal;">Pending Booking Reminder</h2>
+    </div>
+    <div class="content">
+      <p>Dear <strong>${guestName}</strong>,</p>
+      <p>Your booking request is still pending review.</p>
+
+      <div class="status-badge">Pending - Cancellation Notice</div>
+
+      <div class="warning-box">
+        If your booking is not confirmed by <strong>${expiresAt}</strong>, it will be automatically cancelled by the system.
+      </div>
+
+      <div class="booking-details">
+        <h3 style="margin-top: 0; color: #d97706;">Booking Details</h3>
+        <div class="detail-row">
+          <span class="detail-label">Booking ID:</span>
+          <span class="detail-value">${bookingId}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Room Type:</span>
+          <span class="detail-value">${roomType}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Check-in:</span>
+          <span class="detail-value">${checkIn}</span>
+        </div>
+        <div class="detail-row" style="border-bottom: none;">
+          <span class="detail-label">Check-out:</span>
+          <span class="detail-value">${checkOut}</span>
+        </div>
+      </div>
+
+      <p>Please contact ${settings.hotelName} if you still want to continue with this booking request.</p>
+    </div>
+    ${footerHtml(settings)}
+  </div>
+</body>
+</html>
+  `;
+};
+
+export const generateBookingAutoCancelledEmail = (
+  guestName: string,
+  bookingId: string,
+  roomType: string,
+  checkIn: string,
+  checkOut: string,
+  reason?: string,
+  options?: EmailTemplateOptions
+) => {
+  const settings = resolveTemplateSettings(options);
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #991b1b 0%, #dc2626 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .logo { margin-bottom: 20px; }
+    .logo img { max-width: 50px; height: 50px; width: 50px; border-radius: 50%; object-fit: cover; }
+    .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; }
+    .booking-details { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
+    .detail-label { font-weight: bold; color: #374151; }
+    .detail-value { color: #6b7280; }
+    .status-badge { background: #fee2e2; color: #991b1b; padding: 10px 20px; border-radius: 20px; display: inline-block; font-weight: bold; margin: 20px 0; border: 2px solid #ef4444; }
+    .reason-box { background: #fee2e2; border-left: 4px solid #ef4444; padding: 15px; margin: 20px 0; border-radius: 4px; }
+    .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">
+        <img src="${NEMSU_LOGO}" alt="${settings.hotelName} Logo" width="50" height="50" />
+      </div>
+      <h1 style="margin: 0;">${settings.hotelName}</h1>
+      <h2 style="margin: 10px 0 0 0; font-weight: normal;">Booking Automatically Cancelled</h2>
+    </div>
+    <div class="content">
+      <p>Dear <strong>${guestName}</strong>,</p>
+      <p>Your pending booking request has been automatically cancelled because it remained pending for 3 days.</p>
+
+      <div class="status-badge">Cancelled</div>
+
+      ${reason ? `
+      <div class="reason-box">
+        <strong>Reason:</strong><br>
+        ${reason}
+      </div>
+      ` : ''}
+
+      <div class="booking-details">
+        <h3 style="margin-top: 0; color: #991b1b;">Cancelled Booking Details</h3>
+        <div class="detail-row">
+          <span class="detail-label">Booking ID:</span>
+          <span class="detail-value">${bookingId}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Room Type:</span>
+          <span class="detail-value">${roomType}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Check-in:</span>
+          <span class="detail-value">${checkIn}</span>
+        </div>
+        <div class="detail-row" style="border-bottom: none;">
+          <span class="detail-label">Check-out:</span>
+          <span class="detail-value">${checkOut}</span>
+        </div>
+      </div>
+
+      <p>You may submit a new booking request anytime if you still want to stay at ${settings.hotelName}.</p>
     </div>
     ${footerHtml(settings)}
   </div>

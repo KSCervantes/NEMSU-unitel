@@ -4,13 +4,15 @@ import { checkRateLimit, getClientIdentifier } from '@/lib/rateLimit';
 import { verifyAdminAuth } from '@/lib/middleware/auth';
 import { logError } from '@/lib/logger';
 import {
+  generateBookingAutoCancelledEmail,
   generateBookingApprovedEmail,
   generateBookingConfirmationEmail,
+  generatePendingCancellationWarningEmail,
   generateBookingRejectedEmail
 } from '@/lib/emailTemplates';
 import { type SupportedCurrency } from '@/lib/hotelSettings';
 
-type EmailType = 'confirmation' | 'approved' | 'rejected';
+type EmailType = 'confirmation' | 'approved' | 'rejected' | 'pending-warning' | 'auto-cancelled';
 
 type SendEmailBody = {
   type?: unknown;
@@ -23,6 +25,7 @@ type SendEmailBody = {
   guests?: unknown;
   totalAmount?: unknown;
   reason?: unknown;
+  expiresAt?: unknown;
   hotelName?: unknown;
   contactEmail?: unknown;
   contactPhone?: unknown;
@@ -111,7 +114,13 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as SendEmailBody;
     const type = typeof body.type === 'string' ? body.type : '';
     const to = typeof body.to === 'string' ? body.to.trim() : '';
-    const emailType: EmailType | null = (type === 'confirmation' || type === 'approved' || type === 'rejected')
+    const emailType: EmailType | null = (
+      type === 'confirmation' ||
+      type === 'approved' ||
+      type === 'rejected' ||
+      type === 'pending-warning' ||
+      type === 'auto-cancelled'
+    )
       ? type
       : null;
 
@@ -132,7 +141,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (emailType === 'approved' || emailType === 'rejected') {
+    if (emailType !== 'confirmation') {
       const authResult = await verifyAdminAuth(req);
       if (!authResult.isValid) {
         return NextResponse.json(
@@ -150,6 +159,7 @@ export async function POST(req: NextRequest) {
     const guests = parsePositiveInt(body.guests);
     const totalAmount = parseNonNegativeNumber(body.totalAmount);
     const reason = sanitizeText(body.reason, 400);
+    const expiresAt = sanitizeText(body.expiresAt, 120);
     const templateOptions = buildTemplateOptions(body);
     const subjectHotelName = templateOptions.hotelName || 'NEMSU Hotel';
 
@@ -205,6 +215,39 @@ export async function POST(req: NextRequest) {
     if (emailType === 'rejected') {
       subject = `Booking Update - ${subjectHotelName} (ID: ${bookingId})`;
       html = generateBookingRejectedEmail(
+        guestName,
+        bookingId,
+        roomType,
+        checkIn,
+        checkOut,
+        reason || undefined,
+        templateOptions
+      );
+    }
+
+    if (emailType === 'pending-warning') {
+      if (!expiresAt) {
+        return NextResponse.json(
+          { error: 'Missing required field: expiresAt' },
+          { status: 400 }
+        );
+      }
+
+      subject = `Pending Booking Reminder - ${subjectHotelName} (ID: ${bookingId})`;
+      html = generatePendingCancellationWarningEmail(
+        guestName,
+        bookingId,
+        roomType,
+        checkIn,
+        checkOut,
+        expiresAt,
+        templateOptions
+      );
+    }
+
+    if (emailType === 'auto-cancelled') {
+      subject = `Booking Automatically Cancelled - ${subjectHotelName} (ID: ${bookingId})`;
+      html = generateBookingAutoCancelledEmail(
         guestName,
         bookingId,
         roomType,

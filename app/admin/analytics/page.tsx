@@ -18,14 +18,22 @@ interface RoomStats {
 interface StatusStats {
   pending: number;
   confirmed: number;
+  'in-progress': number;
   cancelled: number;
   completed: number;
 }
 
+const formatStatusLabel = (status: string) =>
+  status
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+
 export default function Analytics() {
   const { isAuthenticated } = useProtectedAdminPage();
   const [roomStats, setRoomStats] = useState<RoomStats>({});
-  const [statusStats, setStatusStats] = useState<StatusStats>({ pending: 0, confirmed: 0, cancelled: 0, completed: 0 });
+  const [statusStats, setStatusStats] = useState<StatusStats>({ pending: 0, confirmed: 0, 'in-progress': 0, cancelled: 0, completed: 0 });
   const [totalBookings, setTotalBookings] = useState(0);
 
   useEffect(() => {
@@ -37,7 +45,7 @@ export default function Analytics() {
     const bookingsQuery = query(collection(db, 'bookings'));
     const unsubscribe = onSnapshot(bookingsQuery, (snapshot) => {
       const roomCounts: RoomStats = {};
-      const statusCounts = { pending: 0, confirmed: 0, cancelled: 0, completed: 0 };
+      const statusCounts: StatusStats = { pending: 0, confirmed: 0, 'in-progress': 0, cancelled: 0, completed: 0 };
 
       snapshot.forEach((doc) => {
         const data = doc.data();
@@ -48,7 +56,7 @@ export default function Analytics() {
         }
 
         // Count by status (all bookings)
-        if (data.status) {
+        if (data.status && data.status in statusCounts) {
           statusCounts[data.status as keyof StatusStats] = (statusCounts[data.status as keyof StatusStats] || 0) + 1;
         }
       });
@@ -76,6 +84,7 @@ export default function Analytics() {
   const statusColors: Record<StatusKey, string> = {
     pending: '#F59E0B',
     confirmed: '#10B981',
+    'in-progress': '#6366F1',
     cancelled: '#EF4444',
     completed: '#3B82F6', // Blue for completed status
   };
@@ -83,7 +92,7 @@ export default function Analytics() {
   // Calculate max value for bar chart scaling
   const roomValues = Object.values(roomStats);
   const maxRoomValue = Math.max(...roomValues, 1);
-  const totalStatus = statusStats.pending + statusStats.confirmed + statusStats.cancelled + statusStats.completed || 1;
+  const totalStatus = Object.values(statusStats).reduce((sum, count) => sum + count, 0) || 1;
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -206,7 +215,7 @@ export default function Analytics() {
                         className="w-2 h-2 rounded-full"
                         style={{ backgroundColor: statusColors[statusKey] }}
                       ></div>
-                      <span className="text-gray-700 dark:text-gray-300 capitalize">{status}</span>
+                      <span className="text-gray-700 dark:text-gray-300">{formatStatusLabel(status)}</span>
                       <span className="text-gray-500 dark:text-gray-400">({count})</span>
                     </div>
                   );
@@ -303,8 +312,8 @@ export default function Analytics() {
                         minHeight: '20px'
                       }}
                     ></div>
-                    <div className="text-xs text-gray-600 dark:text-gray-400 capitalize mt-1">
-                      {status}
+                    <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                      {formatStatusLabel(status)}
                     </div>
                   </div>
                 );
@@ -320,8 +329,9 @@ export default function Analytics() {
             <div className="text-3xl font-semibold text-gray-900 dark:text-white">{totalBookings}</div>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
-            <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Confirmed</div>
-            <div className="text-3xl font-semibold text-gray-900 dark:text-white">{statusStats.confirmed}</div>
+            <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Active Reservations</div>
+            <div className="text-3xl font-semibold text-gray-900 dark:text-white">{statusStats.confirmed + statusStats['in-progress']}</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Confirmed + in-house</div>
           </div>
         </div>
       </AdminMainContent>

@@ -334,7 +334,11 @@ service cloud.firestore {
 
     // Coupon identity lock - one coupon redemption per guest identity profile
     match /couponIdentityLocks/{identityKey} {
-      allow read: if isAdmin();
+      // Public clients may check an exact hashed identity key so the booking form can block
+      // already-used coupons before submission. Listing all locks remains admin-only.
+      allow get: if isAdmin() ||
+        identityKey.matches('^(email|name|mobile|phone|address|profile):[0-9a-f]{8}$');
+      allow list: if isAdmin();
       allow create: if
         isAdmin() &&
         request.resource.data.keys().hasOnly(['identityKey', 'identityType', 'couponId', 'bookingId', 'source', 'createdAt']) &&

@@ -1,11 +1,11 @@
 "use client";
 export const dynamic = "force-dynamic";
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { auth, db } from '@/lib/firebase';
-import { collection, onSnapshot, query, where, orderBy, limit, doc, getDoc, setDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, orderBy, limit, doc, getDoc, getDocs, setDoc, updateDoc, arrayUnion, serverTimestamp, runTransaction } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { useSidebar } from '../context/SidebarContext';
 import { isNemsuEmail } from '@/lib/adminAuth';
@@ -28,6 +28,44 @@ interface UserProfile {
   initials: string;
 }
 
+interface PendingAutomationBooking {
+  id: string;
+  name?: string;
+  surname?: string;
+  email?: string;
+  room?: string;
+  checkIn?: string;
+  checkOut?: string;
+  status?: string;
+  createdAt?: { seconds?: number; toMillis?: () => number } | Date | number;
+  pendingAutoCancelWarningClaimedAt?: unknown;
+  pendingAutoCancelWarningSentAt?: unknown;
+}
+
+const PENDING_WARNING_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
+const PENDING_CANCEL_AFTER_MS = 3 * 24 * 60 * 60 * 1000;
+const PENDING_AUTO_CANCEL_REASON = 'Pending for 3 days without staff confirmation.';
+
+function getTimestampMillis(value: PendingAutomationBooking['createdAt']) {
+  if (!value) return null;
+  if (typeof value === 'number') return value;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  return null;
+}
+
+function formatBookingDate(value?: string) {
+  if (!value) return 'Not set';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function getAutomationGuestName(booking: PendingAutomationBooking) {
+  return [booking.name, booking.surname].filter(Boolean).join(' ').trim() || 'Guest';
+}
+
 export default function Header() {
   const router = useRouter();
   const pathname = usePathname();
@@ -39,6 +77,7 @@ export default function Header() {
   const [viewedNotifications, setViewedNotifications] = useState<Set<string>>(new Set());
   const viewedNotificationsRef = useRef<Set<string>>(new Set());
   const [canAccessData, setCanAccessData] = useState(false);
+  const automationLastRunRef = useRef(0);
   const [userProfile, setUserProfile] = useState<UserProfile>({
     displayName: '',
     email: '',
@@ -61,6 +100,149 @@ export default function Header() {
       logError('Logout error:', error);
     }
   };
+
+  const sendPendingAutomationEmail = useCallback(async (
+    type: 'pending-warning' | 'auto-cancelled',
+    booking: PendingAutomationBooking,
+    idToken: string,
+    adminEmail: string,
+    createdAtMs?: number
+  ) => {
+    if (!booking.email) return;
+
+    const expiresAt = createdAtMs
+      ? new Date(createdAtMs + PENDING_CANCEL_AFTER_MS).toLocaleString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        })
+      : undefined;
+
+    const response = await fetch('/api/send-email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+        'x-admin-email': adminEmail,
+      },
+      body: JSON.stringify({
+        type,
+        to: booking.email,
+        bookingId: booking.id,
+        guestName: getAutomationGuestName(booking),
+        roomType: booking.room || 'Room',
+        checkIn: formatBookingDate(booking.checkIn),
+        checkOut: formatBookingDate(booking.checkOut),
+        expiresAt,
+        reason: PENDING_AUTO_CANCEL_REASON,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Email request failed with ${response.status}`);
+    }
+  }, []);
+
+  const runClientPendingAutomation = useCallback(async (idToken: string, adminEmail: string) => {
+    const nowMs = Date.now();
+    const pendingSnapshot = await getDocs(query(collection(db, 'bookings'), where('status', '==', 'pending')));
+
+    for (const docSnap of pendingSnapshot.docs) {
+      const data = docSnap.data() as PendingAutomationBooking;
+      const createdAtMs = getTimestampMillis(data.createdAt);
+      if (!createdAtMs) continue;
+
+      const bookingRef = doc(db, 'bookings', docSnap.id);
+
+      if (nowMs - createdAtMs >= PENDING_CANCEL_AFTER_MS) {
+        const claimed = await runTransaction(db, async (transaction) => {
+          const freshSnap = await transaction.get(bookingRef);
+          if (!freshSnap.exists()) return null;
+
+          const fresh = freshSnap.data() as PendingAutomationBooking;
+          const freshCreatedAtMs = getTimestampMillis(fresh.createdAt);
+
+          if (fresh.status !== 'pending' || !freshCreatedAtMs || nowMs - freshCreatedAtMs < PENDING_CANCEL_AFTER_MS) {
+            return null;
+          }
+
+          transaction.update(bookingRef, {
+            status: 'cancelled',
+            autoCancelledAt: serverTimestamp(),
+            autoCancelledReason: PENDING_AUTO_CANCEL_REASON,
+            updatedAt: serverTimestamp(),
+          });
+
+          return { ...fresh, id: docSnap.id };
+        });
+
+        if (claimed) {
+          try {
+            await sendPendingAutomationEmail('auto-cancelled', claimed, idToken, adminEmail);
+            await updateDoc(bookingRef, {
+              autoCancelEmailSentAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          } catch (error) {
+            await updateDoc(bookingRef, {
+              autoCancelEmailError: error instanceof Error ? error.message : 'Failed to send auto-cancellation email',
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+
+        continue;
+      }
+
+      if (nowMs - createdAtMs >= PENDING_WARNING_AFTER_MS) {
+        const claimed = await runTransaction(db, async (transaction) => {
+          const freshSnap = await transaction.get(bookingRef);
+          if (!freshSnap.exists()) return null;
+
+          const fresh = freshSnap.data() as PendingAutomationBooking;
+          const freshCreatedAtMs = getTimestampMillis(fresh.createdAt);
+
+          if (
+            fresh.status !== 'pending' ||
+            !freshCreatedAtMs ||
+            nowMs - freshCreatedAtMs < PENDING_WARNING_AFTER_MS ||
+            nowMs - freshCreatedAtMs >= PENDING_CANCEL_AFTER_MS ||
+            fresh.pendingAutoCancelWarningClaimedAt ||
+            fresh.pendingAutoCancelWarningSentAt
+          ) {
+            return null;
+          }
+
+          transaction.update(bookingRef, {
+            pendingAutoCancelWarningClaimedAt: serverTimestamp(),
+            pendingAutoCancelWarningReason: 'Pending booking is nearing the 3-day auto-cancellation deadline.',
+            updatedAt: serverTimestamp(),
+          });
+
+          return { ...fresh, id: docSnap.id };
+        });
+
+        if (claimed) {
+          try {
+            await sendPendingAutomationEmail('pending-warning', claimed, idToken, adminEmail, createdAtMs);
+            await updateDoc(bookingRef, {
+              pendingAutoCancelWarningSentAt: serverTimestamp(),
+              pendingAutoCancelWarningEmailStatus: 'sent',
+              updatedAt: serverTimestamp(),
+            });
+          } catch (error) {
+            await updateDoc(bookingRef, {
+              pendingAutoCancelWarningEmailStatus: 'failed',
+              pendingAutoCancelWarningEmailError: error instanceof Error ? error.message : 'Failed to send warning email',
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+      }
+    }
+  }, [sendPendingAutomationEmail]);
 
   // Theme handling removed
   useEffect(() => {
@@ -188,6 +370,56 @@ export default function Header() {
     };
   }, [canAccessData]);
 
+  useEffect(() => {
+    if (!canAccessData || !userProfile.email) return;
+
+    let cancelled = false;
+
+    const runPendingAutomation = async () => {
+      const now = Date.now();
+      if (now - automationLastRunRef.current < 5 * 60 * 1000) return;
+      automationLastRunRef.current = now;
+
+      try {
+        const user = auth.currentUser;
+        const idToken = await user?.getIdToken();
+        if (!idToken || !userProfile.email || cancelled) return;
+
+        const response = await fetch('/api/pending-booking-automation', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            'x-admin-email': userProfile.email,
+          },
+        });
+
+        if (!response.ok) {
+          logWarning('Pending booking automation did not complete');
+          await runClientPendingAutomation(idToken, userProfile.email);
+        }
+      } catch (error) {
+        logWarning(`Pending booking automation skipped: ${error instanceof Error ? error.message : 'unknown error'}`);
+        try {
+          const user = auth.currentUser;
+          const idToken = await user?.getIdToken();
+          if (idToken && userProfile.email && !cancelled) {
+            await runClientPendingAutomation(idToken, userProfile.email);
+          }
+        } catch (fallbackError) {
+          logWarning(`Client pending automation skipped: ${fallbackError instanceof Error ? fallbackError.message : 'unknown error'}`);
+        }
+      }
+    };
+
+    runPendingAutomation();
+    const intervalId = window.setInterval(runPendingAutomation, 60 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [canAccessData, runClientPendingAutomation, userProfile.email]);
+
   const getTimeAgo = (timestamp: { seconds: number; nanoseconds: number; toMillis?: () => number } | Date | number | null) => {
     if (!timestamp) return 'Recently';
     const now = Date.now();
@@ -233,6 +465,16 @@ export default function Header() {
           icon: (
             <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          ),
+        };
+      case 'in-progress':
+        return {
+          label: 'Guest Checked In',
+          bgClass: 'bg-indigo-100 dark:bg-indigo-900/30',
+          icon: (
+            <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           ),
         };
